@@ -1,12 +1,12 @@
 /* ============================================================
-   Пасс — автозапуск realtime-сервиса (mini-services/pos-realtime)
+   ВИТАЛИК — автозапуск realtime-сервиса (mini-services/vitalik-hub)
    вместе с Next-сервером. Идемпотентно: если сервис уже отвечает
    (например, его поднял /start.sh контейнера) — ничего не делаем.
    Без статических node-импортов, чтобы не попадать в Edge-bundle.
    ============================================================ */
 
 const SERVICE_PORT = 3003
-const SERVICE_DIR = '/home/z/my-project/mini-services/pos-realtime'
+const SERVICE_DIR = '/home/z/my-project/mini-services/vitalik-hub'
 const SERVICE_CMD = `cd ${SERVICE_DIR} && exec bun run dev >> service.log 2>&1`
 
 /** непрозрачный для бандлера динамический импорт node-модуля */
@@ -28,7 +28,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
   try {
     if (await serviceAlive()) {
-      console.log('[instrumentation] pos-realtime уже работает на :3003')
+      console.log('[instrumentation] vitalik-hub уже работает на :3003')
       return
     }
     const { spawn } = await nodeImport('node:child_process')
@@ -39,8 +39,8 @@ export async function register() {
       env: process.env,
     })
     child.unref()
-    console.log(`[instrumentation] pos-realtime запущен (pid ${child.pid})`)
+    console.log(`[instrumentation] vitalik-hub запущен (pid ${child.pid})`)
   } catch (e) {
-    console.warn('[instrumentation] не удалось запустить pos-realtime:', e)
+    console.warn('[instrumentation] не удалось запустить vitalik-hub:', e)
   }
 }

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Manrope } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
-import { PwaRegister } from "@/components/pos/pwa-register";
+import { PwaRegister } from "@/components/vitalik/pwa-register";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -18,10 +18,10 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Пасс — связь зала и кухни",
+  title: "ВИТАЛИК — связь зала и кухни",
   description:
-    "Ресторанная POS-система реального времени: мобильный терминал официанта и кухонный дисплей (KDS) со сводкой цеха.",
-  applicationName: "Пасс",
+    "Сверхнадёжный трекинг заказов: официант, кухня/раздача и монитор зала видят статус каждого блюда в реальном времени. Никаких потерянных заказов.",
+  applicationName: "ВИТАЛИК",
   manifest: "/manifest.json",
   icons: {
     icon: [{ url: "/icon-512.png", type: "image/png", sizes: "512x512" }],
@@ -29,8 +29,8 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
-    title: "Пасс",
+    statusBarStyle: "black-translucent",
+    title: "ВИТАЛИК",
   },
   formatDetection: {
     telephone: false,
@@ -43,10 +43,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#FAF8F5" },
-    { media: "(prefers-color-scheme: dark)", color: "#26211A" },
-  ],
+  themeColor: "#0F1115",
 };
 
 export default function RootLayout({
@@ -55,12 +52,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ru" suppressHydrationWarning>
+    <html lang="ru" className="dark" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${manrope.variable} font-sans antialiased bg-background text-foreground overscroll-none`}
       >
         {children}
-        <Toaster position="top-center" closeButton richColors />
+        <Toaster position="top-center" closeButton richColors theme="dark" />
         <PwaRegister />
       </body>
     </html>

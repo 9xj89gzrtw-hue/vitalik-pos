@@ -43,76 +43,71 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ---------- ЗАЛ: тёплая светлая тема (читается при дневном свете) ---------- */
+/* ---------- ВИТАЛИК: премиальная контрастная тёмная тема (#0F1115) ----------
+   Бережёт батарею смартфона и не слепит глаза. Зал и кухня — одна тема. */
 :root {
   --radius: 1rem;
-  --background: oklch(0.982 0.004 85);
-  --foreground: oklch(0.225 0.008 56);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.225 0.008 56);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.225 0.008 56);
-  /* тёплый терракотовый акцент (не синий/индиго) */
-  --primary: oklch(0.637 0.194 42);
-  --primary-foreground: oklch(0.99 0.005 85);
-  --secondary: oklch(0.955 0.006 85);
-  --secondary-foreground: oklch(0.3 0.012 56);
-  --muted: oklch(0.955 0.006 85);
-  --muted-foreground: oklch(0.52 0.012 60);
-  --accent: oklch(0.95 0.022 70);
-  --accent-foreground: oklch(0.34 0.06 45);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.915 0.006 70);
-  --input: oklch(0.915 0.006 70);
-  --ring: oklch(0.637 0.194 42);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.637 0.194 42);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.95 0.022 70);
-  --sidebar-accent-foreground: oklch(0.34 0.06 45);
-  --sidebar-border: oklch(0.915 0.006 70);
-  --sidebar-ring: oklch(0.637 0.194 42);
+  --background: #0f1115;
+  --foreground: #f4f4f5;
+  --card: #161b23;
+  --card-foreground: #f4f4f5;
+  --popover: #1a2029;
+  --popover-foreground: #f4f4f5;
+  /* изумрудный акцент готовности */
+  --primary: #10b981;
+  --primary-foreground: #05140e;
+  --secondary: #1d232d;
+  --secondary-foreground: #e4e4e7;
+  --muted: #1d232d;
+  --muted-foreground: #8e8e99;
+  --accent: #242b36;
+  --accent-foreground: #f4f4f5;
+  --destructive: #ef4444;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #10b981;
+  --chart-1: #10b981;
+  --chart-2: #f59e0b;
+  --chart-3: #facc15;
+  --chart-4: #e8734a;
+  --chart-5: #9f1239;
+  --sidebar: #161b23;
+  --sidebar-foreground: #f4f4f5;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #05140e;
+  --sidebar-accent: #242b36;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #10b981;
 }
 
-/* ---------- КУХНЯ: премиальный тёплый тёмный (не слепит глаза) ---------- */
 .dark {
-  --background: oklch(0.16 0.006 60);
-  --foreground: oklch(0.955 0.006 80);
-  --card: oklch(0.212 0.008 60);
-  --card-foreground: oklch(0.955 0.006 80);
-  --popover: oklch(0.225 0.009 60);
-  --popover-foreground: oklch(0.955 0.006 80);
-  --primary: oklch(0.71 0.17 52);
-  --primary-foreground: oklch(0.17 0.012 55);
-  --secondary: oklch(0.268 0.009 60);
-  --secondary-foreground: oklch(0.955 0.006 80);
-  --muted: oklch(0.268 0.009 60);
-  --muted-foreground: oklch(0.7 0.012 70);
-  --accent: oklch(0.29 0.012 60);
-  --accent-foreground: oklch(0.955 0.006 80);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.71 0.17 52);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.212 0.008 60);
-  --sidebar-foreground: oklch(0.955 0.006 80);
-  --sidebar-primary: oklch(0.71 0.17 52);
-  --sidebar-primary-foreground: oklch(0.17 0.012 55);
-  --sidebar-accent: oklch(0.29 0.012 60);
-  --sidebar-accent-foreground: oklch(0.955 0.006 80);
-  --sidebar-border: oklch(1 0 0 / 9%);
-  --sidebar-ring: oklch(0.71 0.17 52);
+  --background: #0f1115;
+  --foreground: #f4f4f5;
+  --card: #161b23;
+  --card-foreground: #f4f4f5;
+  --popover: #1a2029;
+  --popover-foreground: #f4f4f5;
+  --primary: #10b981;
+  --primary-foreground: #05140e;
+  --secondary: #1d232d;
+  --secondary-foreground: #e4e4e7;
+  --muted: #1d232d;
+  --muted-foreground: #8e8e99;
+  --accent: #242b36;
+  --accent-foreground: #f4f4f5;
+  --destructive: #ef4444;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #10b981;
+  --sidebar: #161b23;
+  --sidebar-foreground: #f4f4f5;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #05140e;
+  --sidebar-accent: #242b36;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #10b981;
 }
 
 @layer base {
@@ -120,98 +115,122 @@
     @apply border-border outline-ring/50;
   }
   html {
+    color-scheme: dark;
     -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans), system-ui, sans-serif;
+    overscroll-behavior-y: none;
   }
 }
 
-/* ---------- кастомные анимации и утилиты ---------- */
+/* ---------- ВИТАЛИК: фирменные эффекты ---------- */
 
-@keyframes pos-pop {
-  0% {
-    transform: scale(0.55);
-    opacity: 0.4;
-  }
-  60% {
-    transform: scale(1.15);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-  }
+/* ВИП-рамка: сияющая золотисто-рубиновая */
+.vip-frame {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(#161b23, #161b23) padding-box,
+    linear-gradient(135deg, #f5c16c 0%, #e8734a 45%, #9f1239 100%) border-box;
+  box-shadow:
+    0 0 26px -8px rgba(245, 193, 108, 0.5),
+    0 0 18px -10px rgba(159, 18, 57, 0.6);
 }
 
-@keyframes pos-flash {
-  0% {
-    box-shadow: 0 0 0 0 oklch(0.769 0.188 70.08 / 0.65);
-    border-color: oklch(0.769 0.188 70.08 / 0.9);
-  }
-  100% {
-    box-shadow: 0 0 0 16px oklch(0.769 0.188 70.08 / 0);
-    border-color: var(--border);
-  }
+/* ВИП-чип */
+.vip-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #f5c16c, #e8734a 55%, #d1345b);
+  padding: 0.2rem 0.55rem;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #12060a;
 }
 
-@keyframes pos-fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Полоса «ЗАБРАТЬ С РАЗДАЧИ!» на карточке готового заказа */
+.ready-strip {
+  margin: -1rem -1rem 0.75rem -1rem;
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #05140e;
+  background: linear-gradient(90deg, #34d399, #10b981 50%, #059669);
+  animation: ready-strip-pulse 1.4s ease-in-out infinite;
 }
-
-@keyframes pos-breathe {
+@keyframes ready-strip-pulse {
   0%,
   100% {
-    opacity: 0.55;
+    filter: brightness(1);
   }
   50% {
-    opacity: 1;
+    filter: brightness(0.85);
   }
 }
 
-@layer utilities {
-  .animate-pop {
-    animation: pos-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+/* Пульс плиток радара (отправлен / на раздаче) */
+.animate-pulse-bg {
+  animation: pulse-bg 1.5s ease-in-out infinite;
+}
+@keyframes pulse-bg {
+  0%,
+  100% {
+    filter: brightness(1);
   }
-  .animate-flash {
-    animation: pos-flash 1.4s ease-out 3;
+  50% {
+    filter: brightness(0.78);
   }
-  .animate-fade-up {
-    animation: pos-fade-up 0.35s ease-out both;
+}
+
+/* Тряска неверного пина */
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
   }
-  .animate-breathe {
-    animation: pos-breathe 1.6s ease-in-out infinite;
+  20% {
+    transform: translateX(-7px);
   }
-  .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+  40% {
+    transform: translateX(7px);
   }
-  .no-scrollbar {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+  60% {
+    transform: translateX(-5px);
   }
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
+  80% {
+    transform: translateX(5px);
   }
-  /* аккуратный тонкий скроллбар для длинных списков */
-  .scrollbar-slim {
-    scrollbar-width: thin;
-    scrollbar-color: oklch(0.7 0.012 60 / 0.35) transparent;
-  }
-  .scrollbar-slim::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .scrollbar-slim::-webkit-scrollbar-thumb {
-    border-radius: 9999px;
-    background: oklch(0.7 0.012 60 / 0.35);
-  }
-  .scrollbar-slim::-webkit-scrollbar-track {
-    background: transparent;
-  }
+}
+
+/* Скроллбары */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.nice-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+.nice-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.nice-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.nice-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }

@@ -1,10 +1,44 @@
-import type { CoursePriority, MenuItem, Period, Station } from './types'
+import type { CoursePriority, MenuItem, Period, Station, TableInfo } from './types'
 
 /* ============================================================
-   Меню ресторана (данные из ТЗ) + хелперы
+   ВИТАЛИК — меню ресторана, столы, имена официантов, пресеты
    ============================================================ */
 
-export const TABLES_COUNT = 15
+/** Столы 1–25 + Банкет 1 / Банкет 2 */
+export const TABLES: TableInfo[] = [
+  ...Array.from({ length: 25 }, (_, i) => ({
+    id: `t${i + 1}`,
+    label: `Стол ${i + 1}`,
+    short: String(i + 1),
+    banquet: false,
+  })),
+  { id: 'banquet1', label: 'Банкет 1', short: 'Б1', banquet: true },
+  { id: 'banquet2', label: 'Банкет 2', short: 'Б2', banquet: true },
+]
+
+export const TABLES_BY_ID: ReadonlyMap<string, TableInfo> = new Map(TABLES.map((t) => [t.id, t]))
+
+export function tableLabelOf(tableId: string): string {
+  return TABLES_BY_ID.get(tableId)?.label ?? tableId
+}
+
+export function tableShortOf(tableId: string): string {
+  return TABLES_BY_ID.get(tableId)?.short ?? tableId
+}
+
+/** Быстрый выбор имени официанта (плюс своё имя) */
+export const WAITER_NAMES: readonly string[] = ['АННА', 'МАРИЯ', 'ИВАН', 'ДМИТРИЙ', 'ОЛЬГА']
+
+/** Быстрые комментарии к блюду (в чеке) */
+export const QUICK_NOTES: readonly string[] = ['Без лука', 'Без соуса', 'Без сахара', 'С собой']
+
+/** Пресеты комментария к столу */
+export const TABLE_NOTE_PRESETS: readonly string[] = [
+  'Отдать строго после тоста',
+  'Детям первым',
+  'Гость опаздывает',
+  'Счёт сразу',
+]
 
 export const PERIOD_HOURS: Record<Period, string> = {
   breakfast: '10:00 – 12:00',
@@ -33,7 +67,7 @@ const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
         course_priority: 1,
         items: [
           { id: 'b1', name: 'Овсяная каша со свежими фруктами', time: '8 мин' },
-          { id: 'b2', name: 'Мини-сырники с муссом, сметаной и Nutella от Ferrero', time: '12 мин' },
+          { id: 'b2', name: 'Мини-сырники с муссом, сметаной и Nutella', time: '12 мин' },
           { id: 'b3', name: 'Классический омлет с сыром и свежими овощами', time: '10 мин' },
         ],
       },
@@ -114,7 +148,7 @@ const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
         items: [
           {
             id: 'sd1',
-            name: 'Картофель беби',
+            name: 'Картофель беби с розмарином',
             description: 'Обжаренный на сливочном масле с розмарином',
             time: '10 мин',
           },
@@ -141,7 +175,7 @@ const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
           },
           {
             id: 'd3',
-            name: 'Мини-чизкейк',
+            name: 'Мини-чизкейк с ягодами',
             description: 'С прослойкой из экзотических фруктов и свежими ягодами',
             time: '5 мин',
           },
@@ -163,6 +197,7 @@ export const MENU: MenuItem[] = (Object.keys(RAW_MENU) as Period[]).flatMap((per
       coursePriority: cat.course_priority as CoursePriority,
       category: cat.name,
       period,
+      isGarnish: cat.name === 'ГАРНИРЫ',
     })),
   ),
 )
@@ -173,7 +208,8 @@ export function findMenuItem(id: string): MenuItem | undefined {
   return MENU_INDEX.get(id)
 }
 
-/** Категории периода с "чипс-лейблами" для фильтра зала */
+/* ---------- категории ---------- */
+
 export interface MenuCategory {
   name: string
   chipLabel: string
@@ -199,25 +235,24 @@ export function itemsForPeriod(period: Period): MenuItem[] {
   return MENU.filter((m) => m.period === period)
 }
 
-/* ---------- Гарниры: привязанные и отдельные ---------- */
+/* ---------- гарниры ---------- */
 
 export const GARNISH_CATEGORY = 'ГАРНИРЫ'
 
 /** Категории блюд, к которым можно привязать гарнир */
 export const ATTACHABLE_CATEGORIES: readonly string[] = ['ГОРЯЧИЕ ЗАКУСКИ', 'ГОРЯЧИЕ БЛЮДА']
 
-/** Гарниры для диалога выбора (sd1…sd3) */
+/** Гарниры для всплывающего окна (sd1…sd3) */
 export const GARNISH_ITEMS: MenuItem[] = MENU.filter((m) => m.category === GARNISH_CATEGORY)
 
-/** Множество id гарниров (для санитайзеров) */
 export const GARNISH_IDS: ReadonlySet<string> = new Set(GARNISH_ITEMS.map((g) => g.id))
 
-/** К блюду можно привязать гарнир? (горячие закуски и горячие блюда, не гарниры) */
+/** К блюду можно привязать гарнир? (горячие закуски и горячие блюда) */
 export function isGarnishAttachable(item: MenuItem): boolean {
   return ATTACHABLE_CATEGORIES.includes(item.category)
 }
 
-/** Дательный падеж названий блюд для сводки гарниров на KDS («к Утке», «к Сибасу») */
+/** Дательный падеж для сводки гарниров («к Утке», «к Сибасу») */
 export const DATIVE_NAMES: Record<string, string> = {
   ha1: 'Сибасу',
   ha2: 'Драникам',
@@ -234,16 +269,9 @@ export function defaultPeriod(now = new Date()): Period {
   return 'lunch'
 }
 
-/** Названия курсов для KDS (режим батчинга) */
+/** Названия курсов для сводки цехов (батчинг) */
 export const COURSE_TITLES: Record<CoursePriority, string> = {
   1: 'Салаты',
-  2: 'Горячие закуски',
-  3: 'Горячие блюда и гарниры',
-  4: 'Десерты',
-}
-
-export const COURSE_TITLES_BREAKFAST: Record<CoursePriority, string> = {
-  1: 'Завтраки',
   2: 'Горячие закуски',
   3: 'Горячие блюда и гарниры',
   4: 'Десерты',

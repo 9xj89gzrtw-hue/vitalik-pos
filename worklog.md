@@ -198,3 +198,86 @@ Stage Summary:
 - Обе проблемы UX решены полностью: (1) вкладка «Заказы стола» с живыми статусами/временем + авто-переход после отправки + мигающий «Забрать с кухни!»; (2) гибридные гарниры — диалог привязки, «(Отдельно)», агрегация на KDS («к Утке»), статусы синхронно.
 - Дозаказ автоматический (сервер помечает по активным заказам стола), на кухне — бейджи ДОЗАКАЗ, в зале — кнопка «Дозаказ».
 - Заметки-чипсы «Без соуса/Без лука/С собой»; колокольчик на кухне; персистентность SQLite+localStorage подтверждена перезагрузкой.
+
+---
+Task ID: 1
+Agent: main (Z.ai Code)
+Task: ВИТАЛИК — замена realtime-сервиса: vitalik-hub (socket.io :3003, SQLite, 5-стадийная машина заказов)
+
+Work Log:
+- Остановлен старый pos-realtime (pid 7483/7484), порт 3003 освобождён.
+- src/instrumentation.ts перенастроен на автозапуск mini-services/vitalik-hub.
+- mini-services/vitalik-hub/db.ts: схема orders/order_items (db/vitalik.db): table_id TEXT (t1..t25/banquet1/banquet2), waiter_name, is_vip, table_note, status sent→cooking→ready→served, sent_at/accepted_at/ready_at/served_at/served_day, addendum_count; items: station/course_priority/category, garnish_id/garnish_name, is_standalone, is_addendum.
+- Машина статусов: submitOrder (дозаказ к активному столу — позиции едут с is_addendum и статусом queued|cooking, ready→cooking при дозаказе; client_order_id UNIQUE = идемпотентность при ретраях), acceptOrder, readyOrder, serveOrder, toggleItem (cooking↔ready + автопромоушен/даунгрейд заказа), resetShift (пин 0000 → полное обнуление), pruneOld (3 дня).
+- loadState: активные + обслуженные за день (для аналитики); loadAnalytics: servedTables (уникальные), totalDishes, vipOrders, счётчики по наименованиям.
+- index.ts: протокол vk:* (order:submit/accept/ready/serve, item:toggle, shift:reset, state:fetch) с ack; broadcast vk:state + vk:notify:new-order|accepted|ready|served|reset.
+- Сервис запущен (bun --hot, pid 13920), проверен curl-поллингом.
+
+Stage Summary:
+- Новый хаб полностью реализует 5-стадийный трекинг, ВИП, дозаказы, аналитику дня и защищённый сброс смены; идемпотентность гарантирует «ни одного потерянного заказа» при ретраяях.
+
+---
+Task ID: 2
+Agent: main (Z.ai Code)
+Task: ВИТАЛИК — слой данных фронтенда (типы, меню, derive, audio, socket, store)
+
+Work Log:
+- src/lib/types.ts: Screen/OrderStatus(sent|cooking|ready|served)/ItemStatus(queued|cooking|ready)/DraftItem/TableDraft/Order/Analytics/SubmitPayload/OutboxEntry/OrderBrief.
+- src/lib/menu.ts: меню 18 позиций (завтрак 3 / обед 5 категорий), TABLES 1–25 + Банкет 1/2, WAITER_NAMES (АННА/МАРИЯ/ИВАН/ДМИТРИЙ/ОЛЬГА), QUICK_NOTES (Без лука/Без соуса/Без сахара/С собой), TABLE_NOTE_PRESETS, GARNISH_ITEMS, DATIVE_NAMES («к Утке»).
+- src/lib/derive.ts: orderStages (5-стадийная шкала с временами), buildTableMap (радар + overdue >20 мин), buildKitchenTicket (группы по цехам + блок ДОЗАКАЗ), buildBatch (сводка цехов: строки×чипы столов, гарниры агрегированно с контекстом «к Утке»/«отдельно»), timerLevel 10/20 мин, форматтеры.
+- src/lib/audio.ts: playOrderBeep (двойной колокол), playVipOrderBeep (тройной тревожный), playReadyChime, playSendConfirm, playResetBlip, haptic.
+- src/lib/socket.ts: io('/?XTransformPort=3003'), ack-emit с таймаутом, vk:notify:* → хендлеры стора.
+- src/lib/store.ts (zustand): persist (vk:* в localStorage) — screen, waiterName, selectedTableId, period, waiterTab, statusFilter, kitchenMode, sound; drafts по столам (items+vip+tableNote) с санитайзом; submitDraft с офлайн-очередью (outbox в localStorage, авто-флаш при реконнекте, идемпотентность clientOrderId); notify-хендлеры: звук/вибро/тосты по активному экрану (кухня — новый заказ, официант — «НА РАЗДАЧЕ!» по своим столам), flash-подсветка новых тикетов; accept/ready/serve/toggle/reset действия.
+
+Stage Summary:
+- Полный слой данных с двойной защитой от потери заказов: серверный SQLite + клиентские черновики и офлайн-outbox.
+
+---
+Task ID: 3
+Agent: main (Z.ai Code)
+Task: ВИТАЛИК — весь UI (shell+nav, официант, кухня, монитор)
+
+Work Log:
+- components/vitalik/app-shell.tsx + bottom-nav.tsx: 3 экрана в 1 тап (🛎 Официант / 👨‍🍳 Кухня / 📊 Монитор), фиксированная нижняя панель h-68px + safe-area, бейджи (мои «на раздаче» / непринятые заказы).
+- Официант: header-bar (логотип, имя чипами + своё имя, столы 1–25+банкеты со статус-точками, ВИП-переключатель с золотой рамкой, комментарий к столу с пресетами); menu-tab (периоды, баннер дозаказа, категории-якоря, карточки блюд с бейджами количества, гарнирный Bottom Drawer «Без гарнира | + Картофель | + Сотe | + Рис», гарниры вкладки = отдельные блюда); cart-sheet (степперы, быстрые комментарии-чипы + свой текст, огромная кнопка ОТПРАВИТЬ НА КУХНЮ (N), золотая при ВИП); status-tab (фильтр мои/все, карточки с таймером и 5-стадийной шкалой, галочки блюд, полоса «🟢 ЗАБРАТЬ С РАЗДАЧИ!», кнопка «+ Дозаказ», офлайн-карточки «Ждёт связи»).
+- Кухня: kitchen-screen (живые часы, звук вкл/выкл, 2 режима); ticket-card (ВИП-рамка gold→ruby с свечением, ультра-крупный шрифт, таймер 10/20 мин, комментарий к столу, группы по цехам, тап по блюду = готово, блок ДОЗАКАЗ, кнопки ПРИНЯТЬ В РАБОТУ → ГОТОВО!); runner-banner (📢 ВЫНОС: СТОЛ №N | Официант | блюда + ОТДАНО РАННЕРУ); batch-board (сводка цехов с чипами столов и агрегированными гарнирами).
+- Монитор: monitor-screen (радар 27 плиток: серый/жёлтый мигающий/оранжевый/зелёный мигающий + красный бейдж >20 мин + ⚡ВИП, легенда, тап → dialog состава); аналитика (Обслужено столов / Отдано блюд / ВИП + счётчики по наименованиям с барами); reset-dialog (пин-клавиатура, неверный пин — тряска, 0000 — обнуление).
+- page.tsx → AppShell; layout.tsx: ВИТАЛИК, тема #0F1115, appleWebApp; globals.css: тёмная тема, .vip-frame/.vip-chip/.ready-strip/.animate-pulse-bg/.animate-shake, скроллбары.
+- Удалён старый каталог src/components/pos целиком.
+
+Stage Summary:
+- Все 3 экрана по ТЗ, кнопки ≥50px, мобильная вертикальная верстка (max-w-520 центр), stage-bar переиспользуется официантом и монитором.
+
+---
+Task ID: 4
+Agent: main (Z.ai Code)
+Task: ВИТАЛИК — PWA и фирменный стиль
+
+Work Log:
+- Сгенерирована иконка (image-generation skill, 1024×1024, тёмная с золотым колокольчиком) → sharp: public/icon-512.png, icon-maskable-512.png (safe-zone 78%), icon-1024.png, src/app/icon.png (favicon).
+- manifest.json: ВИТАЛИК, standalone, portrait, #0F1115; sw.js: кэш vitalik-v1 (манифест+иконки), network-first, мимо _next/EIO/XTransformPort.
+
+Stage Summary:
+- PWA устанавливаемо на iPhone/Android, вертикальная ориентация, тёмная статус-панель.
+
+---
+Task ID: 5
+Agent: main (Z.ai Code)
+Task: ВИТАЛИК — верификация (lint, e2e agent-browser, баг-фиксы)
+
+Work Log:
+- lint: 0 ошибок; dev.log: GET / 200; hub: слушает :3003, полный лог жизненного цикла заказов.
+- E2E через gateway :81 (iPhone 390×844): выбраны АННА/Стол 7/ВИП → Ростбиф (прямой тап) + Брискет (гарнирный drawer → Овощное соте) + Картофель беби (отдельно) → корзина (3 блюда) → быстрый комментарий «Без лука» → ОТПРАВИТЬ → авто-переход на «Где мой заказ?» с жёлтой стадией «Ждёт подтверждения кухни».
+- Кухня: ВИП-тикет с рамкой → ПРИНЯТЬ В РАБОТУ (позиции разблокировались) → тап по Ростбифу = готово (мгновенно отразилось у официанта) → +Дозаказ (Брауни с меткой ДОЗАКАЗ в отдельном блоке) → ГОТОВО! → баннер «📢 ВЫНОС: СТОЛ 7 | Официант: АННА | ⚡ ВИП» → ОТДАНО РАННЕРУ → стол свободен, аналитика: 1 стол / 4 блюда / 1 ВИП + счётчики по наименованиям.
+- Батчинг: «Ростбиф — 2 шт (Стол 2: 2)», «Утиная грудка — 1 (Стол 3: 1)», «ГАРНИРЫ суммарно: Картофель (Стол 3 · к Утке: 1; Стол 5 отдельно: 1)».
+- Монитор: радар жёлтый на активных, тап → полный состав с 5-стадийной шкалой.
+- Офлайн-тест: браузер offline → заказ ушёл в outbox (localStorage «vk:outbox», карточка «Ждёт связи») → онлайн → авто-флаш, заказ доставлен на сервер (проверено напрямую сокетом).
+- Мульти-устройства: 2 вкладки — заказ со Стола 11 из вкладки-официанта мгновенно появился в тикетах и сводке вкладки-кухни.
+- Сброс: неверный пин → «Неверный пин-код»; 0000 → сервер обнулён (orders:0, analytics:0).
+- Персистентность: reload → состояние восстановлено с сервера.
+- НАЙДЕНЫ И ИСПРАВЛЕНЫ 2 БАГА: (1) buildBatch: чипы столов показывали qty=0 (pushRow терял количество); (2) reset-dialog: гонка замыканий при быстрых тапах пина (pin+digit по стейлу) → переведён на useRef.
+- Скриншоты: download/vitalik-{waiter-menu,waiter-status,waiter-ready,kitchen-tickets,kitchen-batch,monitor,desktop,icon-1024}.png; консоль браузера без ошибок.
+- Засеяны демо-данные (столы 2/7 ВИП/11/14 на раздаче + обслуженный 5) — сбрасываются пином 0000.
+
+Stage Summary:
+- Полный пользовательский путь подтверждён браузером end-to-end: отправка → приём → приготовление → раздача → вынос раннером → аналитика → сброс смены; офлайн-очередь и кросс-устройственная синхронизация работают; приложения (3000) и хаб (3003) запущены.
