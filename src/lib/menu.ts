@@ -1,0 +1,222 @@
+import type { CoursePriority, MenuItem, Period, Station } from './types'
+
+/* ============================================================
+   Меню ресторана (данные из ТЗ) + хелперы
+   ============================================================ */
+
+export const TABLES_COUNT = 15
+
+export const PERIOD_HOURS: Record<Period, string> = {
+  breakfast: '10:00 – 12:00',
+  lunch: '12:00 – 18:00',
+}
+
+export const PERIOD_LABELS: Record<Period, string> = {
+  breakfast: 'Завтрак',
+  lunch: 'Обед',
+}
+
+interface RawCategory {
+  name: string
+  station: Station
+  course_priority: number
+  items: { id: string; name: string; description?: string; time: string }[]
+}
+
+const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
+  breakfast: {
+    hours: '10:00 - 12:00',
+    categories: [
+      {
+        name: 'Завтраки',
+        station: 'breakfast',
+        course_priority: 1,
+        items: [
+          { id: 'b1', name: 'Овсяная каша со свежими фруктами', time: '8 мин' },
+          { id: 'b2', name: 'Мини-сырники с муссом, сметаной и Nutella от Ferrero', time: '12 мин' },
+          { id: 'b3', name: 'Классический омлет с сыром и свежими овощами', time: '10 мин' },
+        ],
+      },
+    ],
+  },
+  lunch: {
+    hours: '12:00 - 18:00',
+    categories: [
+      {
+        name: 'САЛАТЫ',
+        station: 'cold',
+        course_priority: 1,
+        items: [
+          {
+            id: 's1',
+            name: 'Ростбиф с листьями салата',
+            description: 'Подается с цукини, вялеными томатами и пармезаном в соусе Чимичурри',
+            time: '7 мин',
+          },
+          {
+            id: 's2',
+            name: 'Копченая свекла со страчателлой',
+            description: 'С жареными томатами, лаймовым соусом и орехами пекан',
+            time: '7 мин',
+          },
+          {
+            id: 's3',
+            name: 'Салат с гравлаксом из лосося',
+            description: 'С перепелиным яйцом на листьях шпината и эстрагоновым соусом',
+            time: '8 мин',
+          },
+        ],
+      },
+      {
+        name: 'ГОРЯЧИЕ ЗАКУСКИ',
+        station: 'hot_appetizer',
+        course_priority: 2,
+        items: [
+          {
+            id: 'ha1',
+            name: 'Сибас в гремолате с цукини',
+            description: 'В приправе из ароматного букета зелени, лимона и пармезана',
+            time: '12 мин',
+          },
+          {
+            id: 'ha2',
+            name: 'Драники из батата с гуакамоле',
+            description: 'С йогуртовым соусом и вешенками',
+            time: '14 мин',
+          },
+          {
+            id: 'ha3',
+            name: 'Кокиль с телятиной',
+            description: 'Томленая телятина в сливочном соусе с грибами, запеченная с моцареллой',
+            time: '15 мин',
+          },
+        ],
+      },
+      {
+        name: 'ГОРЯЧИЕ БЛЮДА',
+        station: 'hot_main',
+        course_priority: 3,
+        items: [
+          { id: 'm1', name: 'Утиная грудка', description: 'С соусом из вишни и Мадеры', time: '18 мин' },
+          {
+            id: 'm2',
+            name: 'Брискет из говядины',
+            description: 'В соусе демиглас с конкассе из томатов на бланшированных цукини',
+            time: '16 мин',
+          },
+          { id: 'm3', name: 'Креветки в катаифи', description: 'С манговым чатни', time: '14 мин' },
+        ],
+      },
+      {
+        name: 'ГАРНИРЫ',
+        station: 'hot_main',
+        course_priority: 3,
+        items: [
+          {
+            id: 'sd1',
+            name: 'Картофель беби',
+            description: 'Обжаренный на сливочном масле с розмарином',
+            time: '10 мин',
+          },
+          {
+            id: 'sd2',
+            name: 'Овощное соте',
+            description: 'Баклажан, цукини, перец болгарский, шампиньоны',
+            time: '12 мин',
+          },
+          { id: 'sd3', name: 'Жасминовый рис припущенный', description: 'Припущенный рис', time: '6 мин' },
+        ],
+      },
+      {
+        name: 'ДЕСЕРТЫ',
+        station: 'pastry',
+        course_priority: 4,
+        items: [
+          { id: 'd1', name: 'Брауни с фундуком и Nutella', description: 'С пастой Nutella от Ferrero', time: '6 мин' },
+          {
+            id: 'd2',
+            name: 'Томленая слива со сливочным лабне',
+            description: 'С мускатом и апельсиновым маслом',
+            time: '7 мин',
+          },
+          {
+            id: 'd3',
+            name: 'Мини-чизкейк',
+            description: 'С прослойкой из экзотических фруктов и свежими ягодами',
+            time: '5 мин',
+          },
+        ],
+      },
+    ],
+  },
+}
+
+/** Плоский список всех позиций меню */
+export const MENU: MenuItem[] = (Object.keys(RAW_MENU) as Period[]).flatMap((period) =>
+  RAW_MENU[period].categories.flatMap((cat) =>
+    cat.items.map((it) => ({
+      id: it.id,
+      name: it.name,
+      description: it.description,
+      time: it.time,
+      station: cat.station,
+      coursePriority: cat.course_priority as CoursePriority,
+      category: cat.name,
+      period,
+    })),
+  ),
+)
+
+const MENU_INDEX = new Map(MENU.map((m) => [m.id, m]))
+
+export function findMenuItem(id: string): MenuItem | undefined {
+  return MENU_INDEX.get(id)
+}
+
+/** Категории периода с "чипс-лейблами" для фильтра зала */
+export interface MenuCategory {
+  name: string
+  chipLabel: string
+}
+
+const CHIP_LABELS: Record<string, string> = {
+  Завтраки: 'Завтраки',
+  САЛАТЫ: 'Салаты',
+  'ГОРЯЧИЕ ЗАКУСКИ': 'Закуски',
+  'ГОРЯЧИЕ БЛЮДА': 'Горячее',
+  ГАРНИРЫ: 'Гарниры',
+  ДЕСЕРТЫ: 'Десерты',
+}
+
+export function categoriesForPeriod(period: Period): MenuCategory[] {
+  return RAW_MENU[period].categories.map((c) => ({
+    name: c.name,
+    chipLabel: CHIP_LABELS[c.name] ?? c.name,
+  }))
+}
+
+export function itemsForPeriod(period: Period): MenuItem[] {
+  return MENU.filter((m) => m.period === period)
+}
+
+/** Период по умолчанию по системному времени: 10:00–12:00 → завтрак, иначе обед */
+export function defaultPeriod(now = new Date()): Period {
+  const h = now.getHours()
+  if (h >= 10 && h < 12) return 'breakfast'
+  return 'lunch'
+}
+
+/** Названия курсов для KDS (режим батчинга) */
+export const COURSE_TITLES: Record<CoursePriority, string> = {
+  1: 'Салаты',
+  2: 'Горячие закуски',
+  3: 'Горячие блюда и гарниры',
+  4: 'Десерты',
+}
+
+export const COURSE_TITLES_BREAKFAST: Record<CoursePriority, string> = {
+  1: 'Завтраки',
+  2: 'Горячие закуски',
+  3: 'Горячие блюда и гарниры',
+  4: 'Десерты',
+}

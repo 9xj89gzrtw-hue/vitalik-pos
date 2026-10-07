@@ -1,0 +1,28 @@
+{
+  "name": "Пасс — связь зала и кухни",
+  "short_name": "Пасс",
+  "description": "Ресторанная POS-система реального времени: терминал официанта и кухонный дисплей (KDS) со сводкой цеха.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#faf8f5",
+  "theme_color": "#d95d0f",
+  "lang": "ru",
+  "categories": ["food", "business", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
