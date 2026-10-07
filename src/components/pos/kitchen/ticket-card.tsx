@@ -1,8 +1,8 @@
 'use client'
 
-import { Check, CheckCheck, Flame } from 'lucide-react'
+import { Check, CheckCheck, CornerDownRight, Flame } from 'lucide-react'
 import { plural, type TableTicket } from '@/lib/derive'
-import { COURSE_TITLES, COURSE_TITLES_BREAKFAST, PERIOD_LABELS } from '@/lib/menu'
+import { COURSE_TITLES, COURSE_TITLES_BREAKFAST, findMenuItem, GARNISH_CATEGORY, PERIOD_LABELS } from '@/lib/menu'
 import { usePosStore } from '@/lib/store'
 import type { CoursePriority, OrderItem, Period } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -27,6 +27,9 @@ export function TicketCard({ ticket }: { ticket: TableTicket }) {
   const progress =
     ticket.pieces > 0 ? Math.min(100, Math.round((ticket.donePieces / ticket.pieces) * 100)) : 0
 
+  /* сколько заказов стола — дозаказы (приехали к уже активному столу) */
+  const additions = ticket.orders.filter((o) => o.isAddition).length
+
   return (
     <article className="bg-card flex h-full flex-col overflow-hidden rounded-2xl border border-border">
       {/* Шапка тикета */}
@@ -42,6 +45,13 @@ export function TicketCard({ ticket }: { ticket: TableTicket }) {
           {ticket.orders.length > 1 && (
             <span className="bg-secondary text-secondary-foreground rounded-full px-2 py-0.5 text-[10.5px] font-bold tabular-nums">
               {ticket.orders.length} {plural(ticket.orders.length, 'заказ', 'заказа', 'заказов')}
+            </span>
+          )}
+          {additions > 0 && (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10.5px] font-bold text-amber-400 whitespace-nowrap">
+              {additions === 1
+                ? 'дозаказ'
+                : `+${additions} ${plural(additions, 'дозаказ', 'дозаказа', 'дозаказов')}`}
             </span>
           )}
         </div>
@@ -94,10 +104,24 @@ export function TicketCard({ ticket }: { ticket: TableTicket }) {
   )
 }
 
+/** Amber-чип «ДОЗАКАЗ»: позиция приехала к уже активному столу */
+function AdditionChip() {
+  return (
+    <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400 uppercase whitespace-nowrap">
+      Дозаказ
+    </span>
+  )
+}
+
 /** Строка позиции заказа с кнопкой-бампом «готово / вернуть» */
 function TicketItem({ item }: { item: OrderItem }) {
   const done = item.status === 'done'
   const cooking = item.status === 'cooking'
+  /* гарнир без привязки — самостоятельная позиция заказа */
+  const standaloneGarnish = item.category === GARNISH_CATEGORY && !item.garnishId
+  const garnishLabel = item.garnishId
+    ? (item.garnishName ?? findMenuItem(item.garnishId)?.name ?? '—')
+    : null
 
   return (
     <li className="flex items-start gap-2 py-1">
@@ -111,14 +135,30 @@ function TicketItem({ item }: { item: OrderItem }) {
       </span>
 
       <div className="min-w-0 flex-1">
-        <p
-          className={cn(
-            'text-[13px] leading-snug font-medium',
-            done && 'text-muted-foreground line-through',
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span
+            className={cn(
+              'text-[13px] leading-snug font-medium',
+              done && 'text-muted-foreground line-through',
+            )}
+          >
+            {item.name}
+          </span>
+          {item.isAddition && <AdditionChip />}
+          {standaloneGarnish && (
+            <span className="bg-secondary text-muted-foreground rounded-full px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap">
+              Отдельное блюдо
+            </span>
           )}
-        >
-          {item.name}
-        </p>
+        </div>
+
+        {item.garnishId && (
+          <p className="text-muted-foreground mt-0.5 ml-3 flex items-center gap-1 border-l border-border pl-2 text-[11.5px] leading-snug">
+            <CornerDownRight className="size-3 shrink-0" strokeWidth={2.2} aria-hidden="true" />
+            <span className={done ? 'line-through' : undefined}>Гарнир: {garnishLabel}</span>
+          </p>
+        )}
+
         {item.comment && (
           <p className="mt-0.5 text-[11px] leading-snug text-amber-400/90 italic">
             «{item.comment}»

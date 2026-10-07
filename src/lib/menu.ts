@@ -199,6 +199,34 @@ export function itemsForPeriod(period: Period): MenuItem[] {
   return MENU.filter((m) => m.period === period)
 }
 
+/* ---------- Гарниры: привязанные и отдельные ---------- */
+
+export const GARNISH_CATEGORY = 'ГАРНИРЫ'
+
+/** Категории блюд, к которым можно привязать гарнир */
+export const ATTACHABLE_CATEGORIES: readonly string[] = ['ГОРЯЧИЕ ЗАКУСКИ', 'ГОРЯЧИЕ БЛЮДА']
+
+/** Гарниры для диалога выбора (sd1…sd3) */
+export const GARNISH_ITEMS: MenuItem[] = MENU.filter((m) => m.category === GARNISH_CATEGORY)
+
+/** Множество id гарниров (для санитайзеров) */
+export const GARNISH_IDS: ReadonlySet<string> = new Set(GARNISH_ITEMS.map((g) => g.id))
+
+/** К блюду можно привязать гарнир? (горячие закуски и горячие блюда, не гарниры) */
+export function isGarnishAttachable(item: MenuItem): boolean {
+  return ATTACHABLE_CATEGORIES.includes(item.category)
+}
+
+/** Дательный падеж названий блюд для сводки гарниров на KDS («к Утке», «к Сибасу») */
+export const DATIVE_NAMES: Record<string, string> = {
+  ha1: 'Сибасу',
+  ha2: 'Драникам',
+  ha3: 'Кокилю',
+  m1: 'Утке',
+  m2: 'Брискету',
+  m3: 'Креветкам',
+}
+
 /** Период по умолчанию по системному времени: 10:00–12:00 → завтрак, иначе обед */
 export function defaultPeriod(now = new Date()): Period {
   const h = now.getHours()

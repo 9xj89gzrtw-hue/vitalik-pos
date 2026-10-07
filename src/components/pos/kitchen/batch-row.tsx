@@ -9,8 +9,10 @@ const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-card'
 
 /**
- * Строка блюда в сводке цеха: агрегированное количество, бейджи столов,
- * кнопки «Готовится» / «Готово» на весь батч.
+ * Строка сводки цеха: блюдо либо гарнир (агрегирует привязанные и отдельные
+ * порции). Крупное количество, бейджи столов («к Утке» для привязанных),
+ * кнопки «Готовится» / «Готово» на весь батч (для гарнирных строк отмечает
+ * готовыми сами блюда — itemIds ссылается на позиции блюд).
  */
 export function BatchRow({ row }: { row: AggRow }) {
   // «только что пришло»: любая позиция строки сейчас во флэше стора
@@ -39,12 +41,17 @@ export function BatchRow({ row }: { row: AggRow }) {
         <h3 className="text-foreground min-w-0 flex-1 pt-0.5 text-[13.5px] leading-snug font-semibold line-clamp-2">
           {row.name}
         </h3>
+        {row.isGarnish && (
+          <span className="bg-orange-500/15 text-orange-400 mt-0.5 inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold tracking-wide uppercase whitespace-nowrap">
+            гарнир
+          </span>
+        )}
       </div>
 
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {row.entries.map((entry) => (
           <span
-            key={entry.tableNumber}
+            key={`${entry.tableNumber}:${entry.attachedTo ?? ''}`}
             className={cn(
               'rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums whitespace-nowrap',
               entry.anyCooking
@@ -52,7 +59,9 @@ export function BatchRow({ row }: { row: AggRow }) {
                 : 'bg-secondary text-secondary-foreground',
             )}
           >
-            Стол {entry.tableNumber} · {entry.qty} шт
+            {entry.attachedTo
+              ? `Стол ${entry.tableNumber} · к ${entry.attachedTo} · ${entry.qty} шт`
+              : `Стол ${entry.tableNumber} · ${entry.qty} шт`}
           </span>
         ))}
       </div>

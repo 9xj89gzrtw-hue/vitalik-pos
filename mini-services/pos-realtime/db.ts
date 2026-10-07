@@ -19,7 +19,8 @@ db.exec(`
     table_number INTEGER NOT NULL,
     period       TEXT    NOT NULL,
     status       TEXT    NOT NULL DEFAULT 'active',
-    created_at   INTEGER NOT NULL
+    created_at   INTEGER NOT NULL,
+    is_addition  INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS order_items (
     id             TEXT PRIMARY KEY,
@@ -31,12 +32,26 @@ db.exec(`
     station        TEXT    NOT NULL,
     course_priority INTEGER NOT NULL,
     category       TEXT    NOT NULL,
-    status         TEXT    NOT NULL DEFAULT 'new'
+    status         TEXT    NOT NULL DEFAULT 'new',
+    garnish_id     TEXT,
+    garnish_name   TEXT,
+    is_addition    INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_orders_status   ON orders(status);
   CREATE INDEX IF NOT EXISTS idx_items_order     ON order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_items_status    ON order_items(status);
 `)
+
+/* ---------- миграции для существующих БД (ALTER, если колонок нет) ---------- */
+
+function ensureColumn(table: 'orders' | 'order_items', column: string, ddl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`)
+}
+ensureColumn('orders', 'is_addition', 'is_addition INTEGER NOT NULL DEFAULT 0')
+ensureColumn('order_items', 'garnish_id', 'garnish_id TEXT')
+ensureColumn('order_items', 'garnish_name', 'garnish_name TEXT')
+ensureColumn('order_items', 'is_addition', 'is_addition INTEGER NOT NULL DEFAULT 0')
 
 /* ---------- серверная копия меню (синхронно с src/lib/menu.ts) ---------- */
 
@@ -68,6 +83,11 @@ export const SERVER_MENU: Record<string, ServerMenuItem> = {
   d3: { name: 'Мини-чизкейк', station: 'pastry', coursePriority: 4, category: 'ДЕСЕРТЫ' },
 }
 
+/* ---------- гарниры: серверная валидация ---------- */
+
+const GARNISH_IDS = new Set(['sd1', 'sd2', 'sd3'])
+const ATTACHABLE_CATEGORIES = new Set(['ГОРЯЧИЕ ЗАКУСКИ', 'ГОРЯЧИЕ БЛЮДА'])
+
 /* ---------- типы строк ---------- */
 
 interface OrderRow {
@@ -76,6 +96,7 @@ interface OrderRow {
   period: string
   status: string
   created_at: number
+  is_addition: number
 }
 
 interface ItemRow {
@@ -89,6 +110,9 @@ interface ItemRow {
   course_priority: number
   category: string
   status: string
+  garnish_id: string | null
+  garnish_name: string | null
+  is_addition: number
 }
 
 export interface ApiOrder {
@@ -97,6 +121,8 @@ export interface ApiOrder {
   period: string
   status: 'active' | 'archived'
   createdAt: number
+  /** заказ-дозаказ: у стола уже были активные заказы */
+  isAddition: boolean
   items: {
     id: string
     orderId: string
@@ -109,6 +135,9 @@ export interface ApiOrder {
     category: string
     status: 'new' | 'cooking' | 'done'
     tableNumber: number
+    garnishId: string | null
+    garnishName: string | null
+    isAddition: boolean
   }[]
 }
 
@@ -146,6 +175,7 @@ export function loadActiveOrders(): ApiOrder[] {
     period: o.period,
     status: 'active' as const,
     createdAt: o.created_at,
+    isAddition: o.is_addition === 1,
     items: (itemsStmt.all(o.id) as ItemRow[]).map((i) => ({
       id: i.id,
       orderId: i.order_id,
@@ -158,6 +188,9 @@ export function loadActiveOrders(): ApiOrder[] {
       category: i.category,
       status: i.status as 'new' | 'cooking' | 'done',
       tableNumber: o.table_number,
+      garnishId: i.garnish_id ?? null,
+      garnishName: i.garnish_name ?? null,
+      isAddition: i.is_addition === 1,
     })),
   }))
 }
@@ -165,7 +198,7 @@ export function loadActiveOrders(): ApiOrder[] {
 export interface CreateOrderInput {
   tableNumber: number
   period: 'breakfast' | 'lunch'
-  items: { menuItemId: string; qty: number; comment?: string }[]
+  items: { menuItemId: string; qty: number; comment?: string; garnishId?: string }[]
 }
 
 /** Создание заказа. Возвращает готовый объект или throws Error с текстом. */
@@ -177,34 +210,60 @@ export function createOrder(input: CreateOrderInput): ApiOrder {
   if (!Array.isArray(input?.items) || input.items.length === 0) throw new Error('Пустой заказ')
   if (input.items.length > 100) throw new Error('Слишком много позиций')
 
-  // сливаем дубли (одинаковая позиция + комментарий)
-  const merged = new Map<string, { menuItemId: string; qty: number; comment: string }>()
+  // сливаем дубли (одинаковая позиция + гарнир + комментарий)
+  const merged = new Map<
+    string,
+    { menuItemId: string; qty: number; comment: string; garnishId: string | null }
+  >()
   for (const raw of input.items) {
     const menuItemId = String(raw?.menuItemId ?? '')
     const menu = SERVER_MENU[menuItemId]
     if (!menu) throw new Error(`Неизвестная позиция меню: ${menuItemId || '—'}`)
     const qty = clampInt(raw?.qty, 1, 50, 1)
     const comment = cleanStr(raw?.comment, 80)
-    const key = `${menuItemId}::${comment}`
+
+    // гарнир: только из списка и только к «attachable»-категориям
+    let garnishId: string | null = null
+    if (raw?.garnishId != null) {
+      const gid = String(raw.garnishId)
+      if (!GARNISH_IDS.has(gid)) throw new Error(`Неизвестный гарнир: ${gid || '—'}`)
+      if (!ATTACHABLE_CATEGORIES.has(menu.category)) {
+        throw new Error(`Гарнир не подходит к позиции: ${menu.name}`)
+      }
+      garnishId = gid
+    }
+
+    const key = `${menuItemId}::${garnishId ?? ''}::${comment}`
     const prev = merged.get(key)
     if (prev) prev.qty = Math.min(50, prev.qty + qty)
-    else merged.set(key, { menuItemId, qty, comment })
+    else merged.set(key, { menuItemId, qty, comment, garnishId })
   }
 
   const orderId = uid()
   const createdAt = Date.now()
+  // дозаказ: у стола уже есть активные заказы (считаем ДО вставки нового)
+  const activeCount = (
+    db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE table_number = ? AND status = 'active'`).get(
+      tableNumber,
+    ) as { n: number }
+  ).n
+  const isAddition = activeCount > 0 ? 1 : 0
+
   const insertOrder = db.prepare(
-    `INSERT INTO orders (id, table_number, period, status, created_at) VALUES (?, ?, ?, 'active', ?)`,
+    `INSERT INTO orders (id, table_number, period, status, created_at, is_addition)
+     VALUES (?, ?, ?, 'active', ?, ?)`,
   )
   const insertItem = db.prepare(
-    `INSERT INTO order_items (id, order_id, menu_item_id, name, qty, comment, station, course_priority, category, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')`,
+    `INSERT INTO order_items
+       (id, order_id, menu_item_id, name, qty, comment, station, course_priority, category, status, garnish_id, garnish_name, is_addition)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)`,
   )
 
   const tx = db.transaction(() => {
-    insertOrder.run(orderId, tableNumber, period, createdAt)
-    for (const { menuItemId, qty, comment } of merged.values()) {
+    insertOrder.run(orderId, tableNumber, period, createdAt, isAddition)
+    for (const { menuItemId, qty, comment, garnishId } of merged.values()) {
       const menu = SERVER_MENU[menuItemId]
+      const garnishName = garnishId ? (SERVER_MENU[garnishId]?.name ?? null) : null
       insertItem.run(
         uid(),
         orderId,
@@ -215,6 +274,9 @@ export function createOrder(input: CreateOrderInput): ApiOrder {
         menu.station,
         menu.coursePriority,
         menu.category,
+        garnishId,
+        garnishName,
+        isAddition,
       )
     }
   })

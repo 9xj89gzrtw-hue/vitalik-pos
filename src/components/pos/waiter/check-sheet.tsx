@@ -17,6 +17,7 @@ export function CheckSheet() {
 
   const selectedTable = usePosStore((s) => s.selectedTable)
   const checks = usePosStore((s) => s.checks)
+  const orders = usePosStore((s) => s.orders)
   const sending = usePosStore((s) => s.sending)
   const sendCheck = usePosStore((s) => s.sendCheck)
   const clearCheck = usePosStore((s) => s.clearCheck)
@@ -24,6 +25,8 @@ export function CheckSheet() {
   const check = checks[selectedTable] ?? []
   const { lines, pieces } = checkTotals(check)
   const empty = lines === 0
+  /* у стола уже есть активные заказы → отправка будет дозаказом */
+  const isAddition = orders.some((o) => o.tableNumber === selectedTable)
 
   /* Esc закрывает раскрытый чек */
   useEffect(() => {
@@ -79,8 +82,15 @@ export function CheckSheet() {
               aria-expanded={open}
               className="-mx-1 min-w-0 flex-1 rounded-lg px-1 py-0.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
-              <span className="block truncate font-display text-base font-extrabold leading-tight">
-                Стол {selectedTable}
+              <span className="flex items-center gap-1.5">
+                <span className="block truncate font-display text-base font-extrabold leading-tight">
+                  Стол {selectedTable}
+                </span>
+                {isAddition ? (
+                  <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">
+                    дозаказ
+                  </span>
+                ) : null}
               </span>
               <span
                 className={cn(
@@ -118,8 +128,10 @@ export function CheckSheet() {
               ) : (
                 <Send className="size-4" aria-hidden="true" />
               )}
-              <span className="hidden sm:inline">Отправить на кухню</span>
-              <span className="sm:hidden">На кухню</span>
+              <span className="hidden sm:inline">
+                {isAddition ? 'Дозаказ на кухню' : 'Отправить на кухню'}
+              </span>
+              <span className="sm:hidden">{isAddition ? 'Дозаказ' : 'На кухню'}</span>
             </button>
           </div>
 
@@ -170,7 +182,7 @@ export function CheckSheet() {
                 ) : (
                   <div className="scrollbar-slim max-h-[46dvh] space-y-2 overflow-y-auto px-4 pb-2">
                     {check.map((line, index) => (
-                      <CheckLine key={line.menuItemId} table={selectedTable} line={line} index={index} />
+                      <CheckLine key={line.key} table={selectedTable} line={line} index={index} />
                     ))}
                   </div>
                 )}

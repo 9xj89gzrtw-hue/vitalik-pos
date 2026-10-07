@@ -132,3 +132,69 @@ Work Log:
 Stage Summary:
 - Приложение полностью верифицировано end-to-end: зал → кухня → статусы → зал → архивация, realtime через Caddy-gateway, персистентность SQLite, PWA (manifest+SW+иконки), бипы/вибрации/тосты.
 - Демо-данные: активный заказ стола 3 (кокиль готовится) — можно сразу смотреть вживую.
+
+---
+Task ID: 6-b
+Agent: frontend-styling-expert
+Task: Экран кухни под новый контракт гарниров и дозаказов (KDS)
+
+Work Log:
+- Прочитал worklog (полностью) и контракты: types.ts (OrderItem.garnishId/garnishName/isAddition, Order.isAddition), menu.ts (GARNISH_CATEGORY, DATIVE_NAMES), derive.ts (новая агрегация buildCourseGroups: AggRow.isGarnish, AggEntry.attachedTo, itemIds гарнирной строки = id позиций блюд), store.ts (setItemStatus/archiveTable без изменений), audio.ts (колокольчик), globals.css.
+- kitchen/ticket-card.tsx (режим «По столам»): строка позиции — привязанный гарнир подстрокой ПОД названием блюда (CornerDownRight size-3 + «Гарнир: …», ml-3 + border-l border-border pl-2, text-[11.5px] text-muted-foreground; при done — line-through на названии и на подстроке гарнира, бамп-кнопка по-прежнему одна на блюдо); отдельный гарнир (category=ГАРНИРЫ без garnishId) — обычная строка + серый мини-чип «Отдельное блюдо» (bg-secondary text-muted-foreground rounded-full px-1.5 text-[10px] font-medium); дозаказ (item.isAddition) — amber-чип «ДОЗАКАЗ» (bg-amber-500/15 text-amber-400 border-amber-500/30 uppercase text-[10px] font-bold) рядом с названием, ДО комментария. В шапке тикета: chip «дозаказ»/«+N дозаказа(ов)» (plural из derive) рядом с чипами периода/числа заказов, если среди orders стола есть isAddition.
+- kitchen/batch-row.tsx (режим «Сводка цеха»): бейджи столов — при entry.attachedTo текст «Стол N · к Утке · X шт» (иначе как раньше «Стол N · X шт»); при row.isGarnish — мини-чип «гарнир» (text-[9px] uppercase font-bold tracking-wide, bg-orange-500/15 text-orange-400, shrink-0) справа от названия строки; КРИТИЧЕСКИЙ фикс: key бейджа теперь `${tableNumber}:${attachedTo ?? ''}` — у одной гарнирной строки может быть несколько бейджей одного стола (к Утке / к Сибасу), старый key={tableNumber} давал бы дубль React-ключей. Кнопки «Готовится»/«Готово» — через setItemStatus(row.itemIds, …) как раньше (для гарнирных строк отмечает готовыми сами блюда — задумано контрактом).
+- kitchen/batch-board.tsx: логику не менял — обёртка withCategory() спредом сохраняет garnishId/garnishName/isAddition, строки гарниров автоматически попадают в колонку 3 (coursePriority=3); обновил только устаревший комментарий (категория теперь в контракте OrderItem). kitchen-header/tickets-board/kitchen-footer/kitchen-view — без правок, компилируются вместе.
+- Верификация: bun run lint — 0 ошибок; bunx tsc --noEmit — 0 ошибок в src/** (остались только examples/, mini-services/, skills/ — вне скоупа); dev.log — компиляции успешны, без ошибок; dev-сервер не перезапускал.
+- E2E-смоук через реальный сервис: скрипт на socket.io-client → :3003 создал стол 7: заказ A (утка ×2 + гарнир sd1, ростбиф ×1, комментарий «Без лука») и заказ B-дозаказ (сибас ×1 + sd1, соте ×2 отдельным гарниром, утка ×1). Браузер (agent-browser, http://localhost:81/?role=kitchen, 1280×800): Сводка цеха — «Картофель беби 3 [ГАРНИР]: Стол 7 · к Утке · 2 шт / Стол 7 · к Сибасу · 1 шт», «Овощное соте 2 [ГАРНИР]: Стол 7 · 2 шт», «Утиная грудка 3: Стол 7 · 3 шт»; По столам — СТОЛ 7 «2 заказа» + «дозаказ», ДОЗАКАЗ-чипы у позиций заказа B, подстроки «↳ Гарнир: Картофель беби», чип «Отдельное блюдо» у соте. Бамп «Готово» на строке гарнира → готовы сами блюда (утка A и сибас исчезли, утка B осталась 1 шт); line-through распространился и на подстроку гарнира. «Стол полностью отдан» → карточка исчезла, empty-state. VLM-проверка скриншотов (/tmp/kds-*6b.png): все элементы видны, перекрытий/обрезок нет. Тестовые данные архивированы, скрипт удалён, браузер закрыт. Ошибок в консоли браузера нет.
+
+Stage Summary:
+- Изменены: src/components/pos/kitchen/ticket-card.tsx (гарнир-подстрока, чипы «ДОЗАКАЗ»/«Отдельное блюдо», header-чип «+N дозаказа»), src/components/pos/kitchen/batch-row.tsx (чип «гарнир», бейджи «к Утке», уникальный key бейджей), src/components/pos/kitchen/batch-board.tsx (только комментарий). lib/app/waiter-файлы не тронуты.
+- Ключевые решения: гарнир — визуальная часть строки блюда (один бамп на блюдо); дозаказы — единый amber-акцент (чип в позиции + сводный чип в шапке тикета); гарнирные строки сводки помечены оранжевым «ГАРНИР», чтобы повар отличал их от строк блюд; plural-логика из derive для «дозаказа/дозаказов».
+- Открытых вопросов нет: новые поля контракта рендерятся опционально (старые payload-ы без garnishId/isAddition отображаются как раньше).
+
+---
+Task ID: 6-a
+Agent: frontend-styling-expert
+Task: Обновление экрана официанта — две вкладки (новый заказ / заказы стола), «Забрать с кухни!» на чипе стола, гибридные гарниры (диалог выбора), строки чека по line.key, дозаказы, панель действий стола
+
+Work Log:
+- Прочитал worklog (весь), контракты src/lib/* (types/menu/derive/store/audio), page.tsx, globals.css, текущие файлы waiter/**, ui/drawer (vaul) и kitchen/use-now.
+- Новый waiter/waiter-tabs.tsx: сегмент-контрол role=tablist/tab/aria-selected (стиль period-toggle: bg-secondary p-1 rounded-xl, активный bg-foreground text-background font-bold), иконки NotebookPen/ClipboardList; на вкладке «Заказы стола» — мини-бейдж bg-primary с числом активных шт стола (только >0) + изумрудная точка при tableHasReady.
+- Новый waiter/table-orders.tsx: сводка-пилюли «В очереди/Готовится/Готово» (Clock3/Flame/CheckCheck, zinc/amber/emerald, только ненулевые) + «Всего M шт»; карточки отправок по createdAt DESC (animate-fade-up): Clock3 + formatClock (bold tabular) + живое formatAgo через общий useNowSeconds (кросс-импорт из kitchen/), amber-бейдж «ДОЗАКАЗ» при order.isAddition; строки «2×»/название (line-through+emerald при done)/бейдж статуса (done — сплошной bg-emerald-600 text-white uppercase animate-breathe «ГОТОВО К ВЫДАЧЕ!»); подстрока «Гарнир: …» (CornerDownRight, отступ под названием), чип «Отдельно» для отдельных гарниров, комментарий «ёлочками» amber-italic; пустое состояние (ClipboardList в круге + «К меню»); фиксированная панель bg-card/95 backdrop-blur border-t safe-bottom max-w-2xl: «+ Дозаказ» (→ setWaiterTab('menu')) и «Рассчитать и закрыть стол» (border-red-300 text-red-600, flex-[1.3], disabled без заказов, window.confirm → archiveTable).
+- Новый waiter/garnish-dialog.tsx: vaul Drawer (контролируемый item!==null), DrawerTitle «Добавить гарнир?» + DrawerDescription = название блюда (font-display bold, line-clamp-2); вертикальные кнопки h-12 rounded-xl active:scale-[0.98]: «Без гарнира» (bg-secondary) + 3 гарнира GARNISH_ITEMS (border-primary/25 bg-primary/10, Plus-иконка, справа чип времени); выбор → addToCheck(table, item, garnishId?) → закрытие (haptic/звук в store).
+- waiter-view.tsx: порядок шапки бренд → WaiterTabs → TableBar (в обеих вкладках) → PeriodToggle/SearchField/CategoryChips только в 'menu'; main id=waiter-panel-* role=tabpanel aria-labelledby; MenuGrid/TableOrders по вкладке; CheckSheet только в 'menu' (при отправке стор сам переключает вкладку → sheet размонтируется).
+- table-bar.tsx: tableHasReady → чип целиком emerald bg-emerald-600 text-white shadow-md animate-breathe, две строки (BellRing+номер / «ЗАБРАТЬ!» text-[8.5px] uppercase), aria-label «Стол N — забрать с кухни!», приоритетнее selected; точку 'ready' убрал (замена мигающим чипом).
+- menu-grid.tsx: состояние pending + рендер GarnishDialog (в т.ч. при пустой выдаче), onPick в MenuCard; menu-card.tsx: attachable → onPick, бейдж qty = сумма по всем строкам блюда (любые гарниры), чип «+ гарнир» (bg-accent) рядом с чипом времени, aria-label дополнен.
+- check-line.tsx: все операции по line.key (updateCheckQty/removeCheckItem/setCheckComment); подстрока «Гарнир: …» под названием; чип «Отдельно»; COMMENT_PRESETS = ['Без соуса','Без лука','С собой'].
+- check-sheet.tsx: key={line.key}; кнопка «Дозаказ на кухню»/«Дозаказ» (мобайл) при orders.some(стол); amber-чип «дозаказ» в свёрнутом баре рядом со «Стол N»; setOpen(false) после await сохранён.
+- sent-banner.tsx: перенесён вниз fixed inset-x-4 bottom-[112px] (над чеком/панелью), анимация y: 24↔0.
+- E2E через agent-browser (gateway :81, 393×852): вкладки/роли табов; диалог гарнира (утка + картофель беби) → чек с подстрокой гарнира и «Отдельно» для отдельного картофеля; комментарий пресетом «Без соуса»; ОТПРАВКА → авто-переключение на «Заказы стола», бейдж «3 шт. в работе» на вкладке; карточка со сводкой «В очереди 3 · Всего 3 шт»; кухня (вторая вкладка) «Готово» по утке → у официанта чип «7 ЗАБРАТЬ!» (классы emerald+animate-breathe подтверждены), «ГОТОВО К ВЫДАЧЕ!», сводка «Готово 1»; «Рассчитать и закрыть стол» → confirm → архивация → пустое состояние, кнопка disabled; дозаказ чизкейка → вторая карточка с бейджем «ДОЗАКАЗ», кнопка «ДОЗАКАЗ НА КУХНЮ» (sm+) и amber-чип «дозаказ» в свёрнутом баре; плашка «Заказ отправлен!» внизу (bottom-[112px]). Скриншоты в /tmp/w6a-*.png.
+- `bun run lint` — 0 ошибок; `bunx tsc --noEmit` — 0 ошибок в src/** (остались только examples/, mini-services/, skills/ — вне скоупа); dev.log — компиляции без ошибок; dev-сервер не перезапускал.
+
+Stage Summary:
+- Создано: waiter/{waiter-tabs, table-orders, garnish-dialog}.tsx. Изменено: waiter-view.tsx, waiter/{table-bar, menu-grid, menu-card, check-line, check-sheet, sent-banner}.tsx. lib/app/kitchen/role-select/splash/connection-dot не тронуты.
+- Ключевые решения: вкладки — нативный tablist с aria-controls на main role=tabpanel; живое «N мин назад» — общий синглтон useNowSeconds (один интервал на всё приложение); приоритет «Забрать!» над выбранным столом; qty карточки меню агрегируется по menuItemId по всем строкам (гарниры не ломают бейдж); панель действий и чек-шит никогда не сосуществуют (вкладки), поэтому общий pb-[120px] в main; звуки/вибрации/тосты не дублировал (централизовано в store).
+- Демо-состояние после E2E: стол 7 — активный заказ (чизкейк, new) + дозаказ-карточка; чек пуст.
+- Открытых вопросов нет: контракты стора (line.key, waiterTab, archiveTable, tableHasReady/formatClock/formatAgo) соответствуют использованию.
+---
+Task ID: 5 + 7
+Agent: main (Z.ai Code)
+Task: Контракты гарниров/дозаказа (lib + сервер) и финальная интеграция + E2E
+
+Work Log:
+- types.ts: WaiterTab; CheckItem.key (menuItemId::garnishId) + garnishId; OrderItem.garnishId/garnishName/isAddition; Order.isAddition.
+- menu.ts: GARNISH_CATEGORY/ATTACHABLE_CATEGORIES/GARNISH_ITEMS/GARNISH_IDS/isGarnishAttachable + DATIVE_NAMES (к Утке/к Сибасу/…).
+- derive.ts: buildCourseGroups переписана на «единицы» (блюдо + привязанный гарнир/отдельный гарнир): AggRow.isGarnish, AggEntry.attachedTo; новые хелперы tableHasReady, formatClock, formatAgo.
+- store.ts: waiterTab (persist), addToCheck(table, item, garnishId?), операции чека по line.key, санитайз-миграция старых черновиков, sendCheck шлёт минимальный payload и при успехе сам открывает вкладку «Заказы стола».
+- audio.ts: playOrderBeep → двойной удар «колокольчика» (обертоны, затухание ~1с); playReadyChime без изменений.
+- mini-services/pos-realtime/db.ts: колонки garnish_id/garnish_name/is_addition (CREATE + ALTER-миграция через PRAGMA table_info), серверная валидация гарниров (только sd1–3 и только к ГОРЯЧИМ ЗАКУСКАМ/БЛЮДАМ), merge-ключ menuItemId::garnishId::comment, is_addition вычисляется по активным заказам стола ДО вставки.
+- Перезапуск сервиса: kill + touch next.config.ts (instrumentation пересподнял :3003; bun --hot не подхватил правки db.ts). Смоук-тест протокола: гарнир, дозаказ (isAddition=true), reject невалидного гарнира, state/ack — ок. Тестовые данные вычищены.
+- Субагенты 6-a/6-b (параллельно): экраны официанта и кухни (см. их секции).
+- Интеграция: bun run lint — 0; bunx tsc --noEmit — 0 в src/**; dev.log чистый (warnings node-module-in-edge-runtime в логе — исторические строки прошлой сессии, файл instrumentation.ts не менялся — подтверждено git status).
+- E2E браузером (gateway :81, сессии w 393×852 / k 1280×800): вкладки; гарнир-диалог (утка+картофель, брискет «Без гарнира»); отдельный гарнир без диалога + чип «Отдельно»; заметка-чип «Без соуса» в 1 клик; НА КУХНЮ → авто-переход на «Заказы стола» со статусами; KDS сводка: «Картофель беби» ГАРНИР = «Стол 5 · к Утке · 1 шт» + «Стол 5 · 1 шт», «Жасминовый рис · к Сибасу»; тикеты: подстроки «↳ Гарнир:», «Отдельное блюдо», чипы ДОЗАКАЗ, шапка «дозаказ», комментарий; статус-флоу кухня→зал мгновенный («Готовится»→«ГОТОВО К ВЫДАЧЕ!»), чип стола мигает «ЗАБРАТЬ!»; «+ Дозаказ» → меню → кнопка «ДОЗАКАЗ» → вторая карточка с бейджем; «Рассчитать и закрыть стол» (confirm) → empty-state; ошибок консоли нет; VLM-осмотр 3 скриншотов — перекрытий/дефектов нет.
+- Персистентность: reload страницы → роль/вкладка/стол из localStorage, заказы и статусы из SQLite (демо-стол 2 восстановился, «Забрать!» мигает).
+- Демо-состояние для пользователя: стол 2 — Утиная грудка + Картофель беби (Готовится), Салат с гравлаксом (ГОТОВО → стол мигает «Забрать!»), Картофель беби ×2 (Отдельно, В очереди).
+
+Stage Summary:
+- Обе проблемы UX решены полностью: (1) вкладка «Заказы стола» с живыми статусами/временем + авто-переход после отправки + мигающий «Забрать с кухни!»; (2) гибридные гарниры — диалог привязки, «(Отдельно)», агрегация на KDS («к Утке»), статусы синхронно.
+- Дозаказ автоматический (сервер помечает по активным заказам стола), на кухне — бейджи ДОЗАКАЗ, в зале — кнопка «Дозаказ».
+- Заметки-чипсы «Без соуса/Без лука/С собой»; колокольчик на кухне; персистентность SQLite+localStorage подтверждена перезагрузкой.

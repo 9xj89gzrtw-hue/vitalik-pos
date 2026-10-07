@@ -16,6 +16,9 @@ export type OrderStatus = 'active' | 'archived'
 
 export type KitchenMode = 'batch' | 'tickets'
 
+/** Вкладка экрана официанта: меню (новый заказ) / заказы стола */
+export type WaiterTab = 'menu' | 'orders'
+
 export type ConnectionState = 'connecting' | 'online' | 'offline'
 
 /** Позиция меню (статичные данные) */
@@ -34,7 +37,11 @@ export interface MenuItem {
 
 /** Позиция черновика (чек официанта, ещё не отправлен) */
 export interface CheckItem {
+  /** Уникальный ключ строки: `menuItemId::garnishId` (для степперов/комментариев) */
+  key: string
   menuItemId: string
+  /** Привязанный гарнир (sd1…sd3), если блюдо добавлено «с гарниром» */
+  garnishId?: string
   name: string
   qty: number
   comment?: string
@@ -54,6 +61,12 @@ export interface OrderItem {
   category: string
   status: ItemStatus
   tableNumber: number
+  /** Привязанный гарнир: id позиции меню (sd1…sd3) */
+  garnishId?: string | null
+  /** Имя привязанного гарнира («Картофель беби») */
+  garnishName?: string | null
+  /** Позиция приехала дозаказом к уже активному столу */
+  isAddition?: boolean
 }
 
 export interface Order {
@@ -63,6 +76,8 @@ export interface Order {
   status: OrderStatus
   /** epoch ms */
   createdAt: number
+  /** Заказ-дозаказ: у стола уже были активные заказы в момент отправки */
+  isAddition?: boolean
   items: OrderItem[]
 }
 

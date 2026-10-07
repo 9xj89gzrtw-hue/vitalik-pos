@@ -1,12 +1,13 @@
 'use client'
 
 import { useRef, useState, type FocusEvent } from 'react'
-import { Check, MessageSquareText, Minus, Plus, Trash2, X } from 'lucide-react'
+import { Check, CornerDownRight, MessageSquareText, Minus, Plus, Trash2, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
-import type { CheckItem } from '@/lib/types'
+import { findMenuItem, GARNISH_CATEGORY } from '@/lib/menu'
 import { usePosStore } from '@/lib/store'
+import type { CheckItem } from '@/lib/types'
 
-const COMMENT_PRESETS = ['Без лука', 'Без зелени', 'Не остро', '½ порции'] as const
+const COMMENT_PRESETS = ['Без соуса', 'Без лука', 'С собой'] as const
 
 interface CheckLineProps {
   table: number
@@ -18,7 +19,7 @@ interface CheckLineProps {
 const STEP_BTN =
   'grid size-8 place-items-center rounded-lg border border-border bg-card text-foreground transition active:scale-90 outline-none focus-visible:ring-2 focus-visible:ring-ring/60'
 
-/** Строка чека: степпер количества, название, удаление, комментарий */
+/** Строка чека: степпер количества, название (+гарнир), удаление, комментарий */
 export function CheckLine({ table, line, index }: CheckLineProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -28,13 +29,17 @@ export function CheckLine({ table, line, index }: CheckLineProps) {
   const setCheckComment = usePosStore((s) => s.setCheckComment)
   const removeCheckItem = usePosStore((s) => s.removeCheckItem)
 
+  const garnishName = findMenuItem(line.garnishId ?? '')?.name
+  const standalone =
+    findMenuItem(line.menuItemId)?.category === GARNISH_CATEGORY && !line.garnishId
+
   const startEditing = () => {
     setDraft(line.comment ?? '')
     setEditing(true)
   }
 
   const commit = () => {
-    setCheckComment(table, line.menuItemId, draft)
+    setCheckComment(table, line.key, draft)
     setEditing(false)
   }
 
@@ -57,13 +62,13 @@ export function CheckLine({ table, line, index }: CheckLineProps) {
       style={{ animationDelay: `${Math.min(index * 40, 240)}ms` }}
       className="animate-fade-up rounded-xl border border-border bg-secondary/60 p-2.5"
     >
-      {/* верхний ряд: степпер + название + удаление */}
+      {/* верхний ряд: степпер + название (+ гарнир/«Отдельно») + удаление */}
       <div className="flex items-center gap-2">
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             aria-label={`Убрать одну порцию: ${line.name}`}
-            onClick={() => updateCheckQty(table, line.menuItemId, -1)}
+            onClick={() => updateCheckQty(table, line.key, -1)}
             className={STEP_BTN}
           >
             <Minus className="size-3.5" aria-hidden="true" />
@@ -72,19 +77,34 @@ export function CheckLine({ table, line, index }: CheckLineProps) {
           <button
             type="button"
             aria-label={`Добавить одну порцию: ${line.name}`}
-            onClick={() => updateCheckQty(table, line.menuItemId, 1)}
+            onClick={() => updateCheckQty(table, line.key, 1)}
             className={STEP_BTN}
           >
             <Plus className="size-3.5" aria-hidden="true" />
           </button>
         </div>
-        <span className="line-clamp-2 min-w-0 flex-1 text-[13px] font-semibold leading-tight">
-          {line.name}
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="line-clamp-2 text-[13px] font-semibold leading-tight">
+              {line.name}
+            </span>
+            {standalone ? (
+              <span className="shrink-0 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                Отдельно
+              </span>
+            ) : null}
+          </span>
+          {line.garnishId ? (
+            <span className="mt-0.5 flex items-center gap-1 text-[11.5px] leading-none text-muted-foreground">
+              <CornerDownRight className="size-3 shrink-0" aria-hidden="true" />
+              Гарнир: {garnishName}
+            </span>
+          ) : null}
         </span>
         <button
           type="button"
           aria-label={`Удалить из чека: ${line.name}`}
-          onClick={() => removeCheckItem(table, line.menuItemId)}
+          onClick={() => removeCheckItem(table, line.key)}
           className="grid size-8 shrink-0 place-items-center rounded-lg text-red-600/80 transition hover:bg-red-500/10 active:scale-90 outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
           <Trash2 className="size-4" aria-hidden="true" />

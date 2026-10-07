@@ -51,10 +51,16 @@ function tone(freq: number, delay: number, dur: number, vol = 0.16, type: Oscill
   }
 }
 
-/** Кухня: новый заказ — двойной бип */
+/** Кухня: новый заказ — двойной удар «колокольчика» (обертоны + длинное затухание) */
 export function playOrderBeep() {
-  tone(880, 0, 0.13, 0.2)
-  tone(1244.5, 0.15, 0.22, 0.2)
+  bellStrike(0, 987.77) // B5
+  bellStrike(0.42, 1174.66) // D6 — выше и легче
+}
+
+function bellStrike(delay: number, base: number) {
+  tone(base, delay, 0.9, 0.2, 'sine')
+  tone(base * 2, delay, 0.45, 0.07, 'sine')
+  tone(base * 2.76, delay, 0.25, 0.035, 'sine')
 }
 
 /** Зал: блюдо готово — мягкий чайм */

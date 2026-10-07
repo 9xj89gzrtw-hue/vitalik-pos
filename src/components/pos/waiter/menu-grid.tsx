@@ -1,9 +1,11 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { SearchX } from 'lucide-react'
 import { itemsForPeriod } from '@/lib/menu'
 import { usePosStore } from '@/lib/store'
+import type { MenuItem } from '@/lib/types'
+import { GarnishDialog } from './garnish-dialog'
 import { MenuCard } from './menu-card'
 
 /** Сетка блюд: период → категория → поиск → сортировка по курсу подачи */
@@ -13,6 +15,9 @@ export function MenuGrid() {
   const search = usePosStore((s) => s.search)
   const setSearch = usePosStore((s) => s.setSearch)
   const setCategory = usePosStore((s) => s.setCategory)
+
+  /* блюдо, к которому открыт диалог выбора гарнира */
+  const [pending, setPending] = useState<MenuItem | null>(null)
 
   const items = useMemo(() => {
     let list = itemsForPeriod(period)
@@ -29,33 +34,37 @@ export function MenuGrid() {
     return [...list].sort((a, b) => a.coursePriority - b.coursePriority)
   }, [period, category, search])
 
-  if (items.length === 0) {
-    const hasFilters = search.trim() !== '' || category !== null
-    return (
-      <div className="animate-fade-up mx-auto flex max-w-md flex-col items-center gap-2 py-16 text-center">
-        <SearchX className="size-10 text-muted-foreground/50" aria-hidden="true" />
-        <p className="text-sm font-semibold text-muted-foreground">Ничего не найдено</p>
-        {hasFilters ? (
-          <button
-            type="button"
-            onClick={() => {
-              setSearch('')
-              setCategory(null)
-            }}
-            className="mt-1 inline-flex min-h-11 items-center rounded-xl px-4 text-sm font-semibold text-primary underline-offset-4 transition hover:underline outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-          >
-            Сбросить фильтры
-          </button>
-        ) : null}
-      </div>
-    )
-  }
+  const hasFilters = search.trim() !== '' || category !== null
 
   return (
-    <div className="mx-auto grid max-w-5xl grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {items.map((item, index) => (
-        <MenuCard key={item.id} item={item} index={index} />
-      ))}
-    </div>
+    <>
+      {items.length === 0 ? (
+        <div className="animate-fade-up mx-auto flex max-w-md flex-col items-center gap-2 py-16 text-center">
+          <SearchX className="size-10 text-muted-foreground/50" aria-hidden="true" />
+          <p className="text-sm font-semibold text-muted-foreground">Ничего не найдено</p>
+          {hasFilters ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('')
+                setCategory(null)
+              }}
+              className="mt-1 inline-flex min-h-11 items-center rounded-xl px-4 text-sm font-semibold text-primary underline-offset-4 transition hover:underline outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              Сбросить фильтры
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mx-auto grid max-w-5xl grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {items.map((item, index) => (
+            <MenuCard key={item.id} item={item} index={index} onPick={setPending} />
+          ))}
+        </div>
+      )}
+
+      {/* выбор гарнира для «гибридных» блюд (горячие закуски / горячие блюда) */}
+      <GarnishDialog item={pending} onDismiss={() => setPending(null)} />
+    </>
   )
 }

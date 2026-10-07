@@ -18,8 +18,10 @@ const COURSE_BADGE: Record<CoursePriority, string> = {
 }
 
 /**
- * buildCourseGroups берёт заголовки колонок из item.category, но в типе OrderItem
- * этого поля нет (и сервер может его не прислать) — обогащаем позиции по меню.
+ * Защита от старых payload-ов: если позиция приехала без category —
+ * обогащаем по меню (fallback — заголовок курса). Спред сохраняет
+ * garnishId / garnishName / isAddition, поэтому строки гарниров и
+ * дозаказы попадают в buildCourseGroups как есть.
  */
 type ItemWithCategory = OrderItem & { category?: string }
 

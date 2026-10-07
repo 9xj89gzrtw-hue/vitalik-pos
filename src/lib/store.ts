@@ -11,8 +11,9 @@ import type {
   Order,
   Period,
   Role,
+  WaiterTab,
 } from './types'
-import { defaultPeriod, TABLES_COUNT } from './menu'
+import { defaultPeriod, findMenuItem, GARNISH_IDS, TABLES_COUNT } from './menu'
 import { emitAck } from './socket'
 import { haptic, playOrderBeep, playReadyChime, playSendConfirm } from './audio'
 
@@ -27,6 +28,7 @@ const LS = {
   sound: 'pos:sound',
   kitchenMode: 'pos:kitchen-mode',
   table: 'pos:table',
+  waiterTab: 'pos:waiter-tab',
 }
 const SS = { period: 'pos:period' }
 
@@ -79,11 +81,14 @@ interface PosState {
   setSearch: (s: string) => void
   category: string | null
   setCategory: (c: string | null) => void
+  /** вкладка экрана официанта: «Меню» (новый заказ) / «Заказы стола» */
+  waiterTab: WaiterTab
+  setWaiterTab: (t: WaiterTab) => void
   checks: Record<number, CheckItem[]>
-  addToCheck: (table: number, item: MenuItem) => void
-  updateCheckQty: (table: number, menuItemId: string, delta: number) => void
-  setCheckComment: (table: number, menuItemId: string, comment: string) => void
-  removeCheckItem: (table: number, menuItemId: string) => void
+  addToCheck: (table: number, item: MenuItem, garnishId?: string) => void
+  updateCheckQty: (table: number, key: string, delta: number) => void
+  setCheckComment: (table: number, key: string, comment: string) => void
+  removeCheckItem: (table: number, key: string) => void
   clearCheck: (table: number) => void
   sending: boolean
   justSent: JustSent | null
@@ -108,14 +113,32 @@ export const usePosStore = create<PosState>((set, get) => ({
     if (get().hydrated) return
     const storedRole = readJson<Role>(LS.role)
     let checks = readJson<Record<number, CheckItem[]>>(LS.checks) ?? {}
-    // санитайз черновиков
+    // санитайз черновиков (+ миграция старой формы без key/garnishId)
     const cleanChecks: Record<number, CheckItem[]> = {}
     for (const [k, v] of Object.entries(checks)) {
       const t = Number(k)
       if (!Number.isInteger(t) || t < 1 || t > TABLES_COUNT || !Array.isArray(v)) continue
       cleanChecks[t] = v
         .filter((c) => c && typeof c.menuItemId === 'string' && Number.isFinite(c.qty) && c.qty > 0)
-        .map((c) => ({ ...c, qty: Math.floor(c.qty), comment: c.comment?.slice(0, 80) }))
+        .map((c) => {
+          const menuItem = findMenuItem(c.menuItemId)
+          /* гарнир валиден, только если он из списка и блюдо — не сам гарнир */
+          const garnishId =
+            typeof c.garnishId === 'string' &&
+            GARNISH_IDS.has(c.garnishId) &&
+            menuItem &&
+            menuItem.category !== 'ГАРНИРЫ'
+              ? c.garnishId
+              : undefined
+          return {
+            key: typeof c.key === 'string' && c.key ? c.key : `${c.menuItemId}::${garnishId ?? ''}`,
+            menuItemId: c.menuItemId,
+            garnishId,
+            name: typeof c.name === 'string' ? c.name : (menuItem?.name ?? c.menuItemId),
+            qty: Math.floor(c.qty),
+            comment: c.comment?.slice(0, 80),
+          }
+        })
     }
     checks = cleanChecks
 
@@ -139,6 +162,7 @@ export const usePosStore = create<PosState>((set, get) => ({
           : 1,
       kitchenMode: readJson<KitchenMode>(LS.kitchenMode) === 'tickets' ? 'tickets' : 'batch',
       soundEnabled: readJson<boolean>(LS.sound) ?? true,
+      waiterTab: readJson<WaiterTab>(LS.waiterTab) === 'orders' ? 'orders' : 'menu',
     })
   },
 
@@ -247,23 +271,29 @@ export const usePosStore = create<PosState>((set, get) => ({
   category: null,
   setCategory: (category) => set({ category }),
 
+  waiterTab: 'menu',
+  setWaiterTab: (waiterTab) => {
+    persistJson(LS.waiterTab, waiterTab)
+    set({ waiterTab })
+  },
+
   checks: {},
-  addToCheck: (table, item) => {
+  addToCheck: (table, item, garnishId) => {
+    const gid = garnishId && GARNISH_IDS.has(garnishId) ? garnishId : undefined
+    const key = `${item.id}::${gid ?? ''}`
     const checks = { ...get().checks }
     const list = [...(checks[table] ?? [])]
-    const existing = list.find((c) => c.menuItemId === item.id)
+    const existing = list.find((c) => c.key === key)
     if (existing) existing.qty += 1
-    else list.push({ menuItemId: item.id, name: item.name, qty: 1 })
+    else list.push({ key, menuItemId: item.id, garnishId: gid, name: item.name, qty: 1 })
     checks[table] = list
     persistJson(LS.checks, checks)
     haptic(8)
     set({ checks })
   },
-  updateCheckQty: (table, menuItemId, delta) => {
+  updateCheckQty: (table, key, delta) => {
     const checks = { ...get().checks }
-    let list = (checks[table] ?? []).map((c) =>
-      c.menuItemId === menuItemId ? { ...c, qty: c.qty + delta } : c,
-    )
+    let list = (checks[table] ?? []).map((c) => (c.key === key ? { ...c, qty: c.qty + delta } : c))
     list = list.filter((c) => c.qty > 0)
     if (list.length) checks[table] = list
     else delete checks[table]
@@ -271,18 +301,18 @@ export const usePosStore = create<PosState>((set, get) => ({
     haptic(6)
     set({ checks })
   },
-  setCheckComment: (table, menuItemId, comment) => {
+  setCheckComment: (table, key, comment) => {
     const checks = { ...get().checks }
     const trimmed = comment.trim().slice(0, 80)
     checks[table] = (checks[table] ?? []).map((c) =>
-      c.menuItemId === menuItemId ? { ...c, comment: trimmed || undefined } : c,
+      c.key === key ? { ...c, comment: trimmed || undefined } : c,
     )
     persistJson(LS.checks, checks)
     set({ checks })
   },
-  removeCheckItem: (table, menuItemId) => {
+  removeCheckItem: (table, key) => {
     const checks = { ...get().checks }
-    const list = (checks[table] ?? []).filter((c) => c.menuItemId !== menuItemId)
+    const list = (checks[table] ?? []).filter((c) => c.key !== key)
     if (list.length) checks[table] = list
     else delete checks[table]
     persistJson(LS.checks, checks)
@@ -307,7 +337,12 @@ export const usePosStore = create<PosState>((set, get) => ({
       const res = await emitAck<{ ok: boolean; error?: string }>('pos:order:create', {
         tableNumber: table,
         period: state.period,
-        items: check,
+        items: check.map(({ menuItemId, garnishId, qty, comment }) => ({
+          menuItemId,
+          garnishId,
+          qty,
+          comment,
+        })),
       })
       if (res?.ok) {
         get().clearCheck(table)
@@ -315,6 +350,8 @@ export const usePosStore = create<PosState>((set, get) => ({
         haptic([14, 50, 24])
         set({
           justSent: { table, pieces: check.reduce((a, c) => a + c.qty, 0), at: Date.now() },
+          /* сразу показываем, что заказал стол — решает «проблему 1» */
+          waiterTab: 'orders',
         })
         setTimeout(() => {
           const js = get().justSent

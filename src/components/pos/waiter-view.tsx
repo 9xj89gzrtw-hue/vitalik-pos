@@ -12,10 +12,13 @@ import { PeriodToggle } from './waiter/period-toggle'
 import { SearchField } from './waiter/search-field'
 import { SentBanner } from './waiter/sent-banner'
 import { TableBar } from './waiter/table-bar'
+import { TableOrders } from './waiter/table-orders'
+import { WaiterTabs } from './waiter/waiter-tabs'
 
-/** Экран официанта: столы → меню → черновик чека → отправка на кухню */
+/** Экран официанта: вкладки «Новый заказ» / «Заказы стола», столы, чек → кухня */
 export function WaiterView() {
   const setRole = usePosStore((s) => s.setRole)
+  const waiterTab = usePosStore((s) => s.waiterTab)
 
   return (
     <div className="relative flex min-h-dvh flex-col bg-background">
@@ -46,18 +49,33 @@ export function WaiterView() {
           </div>
         </div>
 
+        {/* Ряд 2: вкладки «Новый заказ / Заказы стола» */}
+        <WaiterTabs />
+
+        {/* Ряд 3: выбор стола (в обеих вкладках) */}
         <TableBar />
-        <PeriodToggle />
-        <SearchField />
-        <CategoryChips />
+
+        {/* Фильтры меню — только во вкладке «Новый заказ» */}
+        {waiterTab === 'menu' ? (
+          <>
+            <PeriodToggle />
+            <SearchField />
+            <CategoryChips />
+          </>
+        ) : null}
       </header>
 
-      {/* сетка меню: нижний отступ, чтобы фиксированный sheet не перекрывал карточки */}
-      <main className="px-4 pb-[120px] pt-3">
-        <MenuGrid />
+      {/* нижний отступ: под фиксированный sheet (menu) / панель действий (orders) */}
+      <main
+        id={`waiter-panel-${waiterTab}`}
+        role="tabpanel"
+        aria-labelledby={`waiter-tab-${waiterTab}`}
+        className="px-4 pb-[120px] pt-3"
+      >
+        {waiterTab === 'menu' ? <MenuGrid /> : <TableOrders />}
       </main>
 
-      <CheckSheet />
+      {waiterTab === 'menu' ? <CheckSheet /> : null}
     </div>
   )
 }
