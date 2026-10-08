@@ -43,71 +43,72 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ---------- ВИТАЛИК: премиальная контрастная тёмная тема (#0F1115) ----------
-   Бережёт батарею смартфона и не слепит глаза. Зал и кухня — одна тема. */
+/* ---------- ВИТАЛИК: Premium Dark Luxury ----------
+   Графит #0D0F12 · карточки #161922 · границы #262B35 · молочный текст.
+   Маркеры: золото #D4AF37 (ВИП), изумруд #10B981 (готово), янтарь #F59E0B (готовка), коралл #EF4444 (стоп). */
 :root {
   --radius: 1rem;
-  --background: #0f1115;
-  --foreground: #f4f4f5;
-  --card: #161b23;
-  --card-foreground: #f4f4f5;
-  --popover: #1a2029;
-  --popover-foreground: #f4f4f5;
-  /* изумрудный акцент готовности */
+  --background: #0d0f12;
+  --foreground: #f5f1e8;
+  --card: #161922;
+  --card-foreground: #f5f1e8;
+  --popover: #1a1e27;
+  --popover-foreground: #f5f1e8;
+  /* изумрудный акцент готовности к выносу */
   --primary: #10b981;
   --primary-foreground: #05140e;
-  --secondary: #1d232d;
-  --secondary-foreground: #e4e4e7;
-  --muted: #1d232d;
-  --muted-foreground: #8e8e99;
-  --accent: #242b36;
-  --accent-foreground: #f4f4f5;
+  --secondary: #1c212b;
+  --secondary-foreground: #f5f1e8;
+  --muted: #1c212b;
+  --muted-foreground: #8b909b;
+  --accent: #232936;
+  --accent-foreground: #f5f1e8;
   --destructive: #ef4444;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.1);
-  --ring: #10b981;
+  --border: #262b35;
+  --input: #262b35;
+  --ring: #d4af37;
   --chart-1: #10b981;
   --chart-2: #f59e0b;
-  --chart-3: #facc15;
-  --chart-4: #e8734a;
+  --chart-3: #d4af37;
+  --chart-4: #ef4444;
   --chart-5: #9f1239;
-  --sidebar: #161b23;
-  --sidebar-foreground: #f4f4f5;
-  --sidebar-primary: #10b981;
-  --sidebar-primary-foreground: #05140e;
-  --sidebar-accent: #242b36;
-  --sidebar-accent-foreground: #f4f4f5;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: #10b981;
+  --sidebar: #161922;
+  --sidebar-foreground: #f5f1e8;
+  --sidebar-primary: #d4af37;
+  --sidebar-primary-foreground: #14100a;
+  --sidebar-accent: #232936;
+  --sidebar-accent-foreground: #f5f1e8;
+  --sidebar-border: #262b35;
+  --sidebar-ring: #d4af37;
 }
 
 .dark {
-  --background: #0f1115;
-  --foreground: #f4f4f5;
-  --card: #161b23;
-  --card-foreground: #f4f4f5;
-  --popover: #1a2029;
-  --popover-foreground: #f4f4f5;
+  --background: #0d0f12;
+  --foreground: #f5f1e8;
+  --card: #161922;
+  --card-foreground: #f5f1e8;
+  --popover: #1a1e27;
+  --popover-foreground: #f5f1e8;
   --primary: #10b981;
   --primary-foreground: #05140e;
-  --secondary: #1d232d;
-  --secondary-foreground: #e4e4e7;
-  --muted: #1d232d;
-  --muted-foreground: #8e8e99;
-  --accent: #242b36;
-  --accent-foreground: #f4f4f5;
+  --secondary: #1c212b;
+  --secondary-foreground: #f5f1e8;
+  --muted: #1c212b;
+  --muted-foreground: #8b909b;
+  --accent: #232936;
+  --accent-foreground: #f5f1e8;
   --destructive: #ef4444;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.1);
-  --ring: #10b981;
-  --sidebar: #161b23;
-  --sidebar-foreground: #f4f4f5;
-  --sidebar-primary: #10b981;
-  --sidebar-primary-foreground: #05140e;
-  --sidebar-accent: #242b36;
-  --sidebar-accent-foreground: #f4f4f5;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: #10b981;
+  --border: #262b35;
+  --input: #262b35;
+  --ring: #d4af37;
+  --sidebar: #161922;
+  --sidebar-foreground: #f5f1e8;
+  --sidebar-primary: #d4af37;
+  --sidebar-primary-foreground: #14100a;
+  --sidebar-accent: #232936;
+  --sidebar-accent-foreground: #f5f1e8;
+  --sidebar-border: #262b35;
+  --sidebar-ring: #d4af37;
 }
 
 @layer base {
@@ -127,29 +128,58 @@
 
 /* ---------- ВИТАЛИК: фирменные эффекты ---------- */
 
-/* ВИП-рамка: сияющая золотисто-рубиновая */
+/* Логотип: благородный с золотыми звонками */
+.font-logo {
+  font-family: Georgia, 'Times New Roman', 'Playfair Display', serif;
+}
+
+/* ВИП-рамка: сияющее золото */
 .vip-frame {
   border: 2px solid transparent;
   background:
-    linear-gradient(#161b23, #161b23) padding-box,
-    linear-gradient(135deg, #f5c16c 0%, #e8734a 45%, #9f1239 100%) border-box;
+    linear-gradient(#161922, #161922) padding-box,
+    linear-gradient(130deg, #f5e29a 0%, #d4af37 35%, #b8860b 70%, #f5e29a 100%) border-box;
   box-shadow:
-    0 0 26px -8px rgba(245, 193, 108, 0.5),
-    0 0 18px -10px rgba(159, 18, 57, 0.6);
+    0 0 30px -8px rgba(212, 175, 55, 0.55),
+    0 0 14px -6px rgba(212, 175, 55, 0.4);
 }
 
-/* ВИП-чип */
+/* ВИП-чип «⭐ ВИП СТОЛ» */
 .vip-chip {
   display: inline-flex;
   align-items: center;
   border-radius: 9999px;
-  background: linear-gradient(90deg, #f5c16c, #e8734a 55%, #d1345b);
-  padding: 0.2rem 0.55rem;
+  background: linear-gradient(90deg, #f5e29a, #d4af37 60%, #b8860b);
+  padding: 0.2rem 0.6rem;
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #12060a;
+  color: #14100a;
+  animation: vip-shine 2.6s ease-in-out infinite;
+}
+@keyframes vip-shine {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.22);
+  }
+}
+
+/* Тревога кухни: мерцание экрана при непринятом заказе */
+.kitchen-alarm {
+  animation: kitchen-alarm-pulse 1.2s ease-in-out infinite;
+}
+@keyframes kitchen-alarm-pulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.35), inset 0 0 90px -30px rgba(245, 158, 11, 0.5);
+  }
+  50% {
+    box-shadow: inset 0 0 0 5px rgba(239, 68, 68, 0.6), inset 0 0 130px -20px rgba(239, 68, 68, 0.55);
+  }
 }
 
 /* Полоса «ЗАБРАТЬ С РАЗДАЧИ!» на карточке готового заказа */

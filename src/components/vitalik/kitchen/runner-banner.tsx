@@ -1,93 +1,97 @@
 'use client'
 
-import { Megaphone, PackageCheck } from 'lucide-react'
+import { PackageCheck } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
+import { formatElapsed, orderPieces, pluralDishes, sortKitchenOrders } from '@/lib/derive'
 import type { Order } from '@/lib/types'
-import { formatElapsed, orderPieces, pluralDishes } from '@/lib/derive'
 import { cn } from '@/lib/utils'
+import { tableTitleOf } from './kitchen-utils'
 
 /* ============================================================
-   Баннер для раннера — всплывает, когда заказ готов:
-   «📢 ВЫНОС: СТОЛ №7 | Официант: АННА | Блюда: …»
-   Шеф зовёт раннера и жмёт [ОТДАНО РАННЕРУ].
+   Блок «ВЫНОС ДЛЯ РАННЕРА» — все заказы со статусом ready.
+   Шеф голосует раннера без телефона: большой изумрудный
+   баннер + [ОТДАНО РАННЕРУ] (store.serveOrder).
    ============================================================ */
 
-export function RunnerBanner({ orders }: { orders: Order[] }) {
+export function RunnerBanner({ orders, now }: { orders: Order[]; now: number }) {
   const serveOrder = useAppStore((s) => s.serveOrder)
+  const sorted = sortKitchenOrders(orders ?? [])
 
   return (
-    <section aria-label="Вынос на раздаче" className="flex flex-col gap-3">
-      {orders
-        .sort((a, b) => {
-          if (a.isVIP !== b.isVIP) return a.isVIP ? -1 : 1
-          return (a.readyAt ?? a.sentAt) - (b.readyAt ?? b.sentAt)
-        })
-        .map((order) => {
-          const waiting = Date.now() - (order.readyAt ?? Date.now())
-          return (
-            <article
-              key={order.id}
-              className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-400 via-emerald-500 to-emerald-600 p-[3px] shadow-[0_0_36px_-8px_rgba(16,185,129,0.6)]"
-            >
-              <div className="rounded-[22px] bg-gradient-to-br from-emerald-500 to-emerald-600 px-4 py-4 text-black">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-black/15">
-                      <Megaphone className="h-6 w-6" strokeWidth={2.5} />
-                    </span>
-                    <div className="leading-none">
-                      <div className="font-display text-[26px] font-black uppercase leading-none tracking-tight">
-                        Вынос: {order.tableLabel}
-                      </div>
-                      <div className="mt-1.5 text-[13px] font-extrabold">
-                        Официант: {order.waiterName}
-                        {order.isVIP ? ' · ⚡ ВИП' : ''}
-                      </div>
-                    </div>
+    <section aria-label="Вынос для раннера" className="flex flex-col gap-3">
+      {sorted.map((order) => {
+        const waiting = Math.max(0, now - (order.readyAt ?? order.sentAt))
+        return (
+          <article
+            key={order.id}
+            className={cn(
+              'animate-pulse-bg overflow-hidden rounded-3xl border-2 p-4',
+              order.isVIP
+                ? 'vip-frame'
+                : 'border-emerald-500 bg-emerald-500/[0.08] shadow-[0_0_36px_-10px_rgba(16,185,129,0.55)]',
+            )}
+          >
+            <header className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-500/20 text-xl"
+                  aria-hidden
+                >
+                  📢
+                </span>
+                <div className="leading-none">
+                  <div className="text-[26px] font-black uppercase leading-none tracking-tight text-emerald-300">
+                    Вынос: {tableTitleOf(order)}
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className="font-display text-lg font-black tabular-nums leading-none">
-                      ⏱ {formatElapsed(waiting)}
-                    </div>
-                    <div className="mt-1 text-[10px] font-bold uppercase tracking-wide opacity-70">
-                      на раздаче
-                    </div>
+                  <div className="mt-1.5 text-[14px] font-extrabold text-[#F5F1E8]">
+                    Официант: {order.waiterName}
+                    {order.isVIP && <span className="text-[#D4AF37]"> · ⭐ ВИП</span>}
                   </div>
                 </div>
-
-                <ul className="mt-3 flex flex-col gap-1 rounded-2xl bg-black/10 px-4 py-3">
-                  {order.items.slice(0, 4).map((item) => (
-                    <li key={item.id} className="text-[15px] font-extrabold leading-snug">
-                      {item.qty}× {item.name}
-                      {item.garnishId && (
-                        <span className="font-bold opacity-75"> + {item.garnishName}</span>
-                      )}
-                    </li>
-                  ))}
-                  {order.items.length > 4 && (
-                    <li className="text-[13px] font-bold opacity-75">
-                      … и ещё {order.items.length - 4} позиц.
-                    </li>
-                  )}
-                </ul>
-
-                <button
-                  type="button"
-                  onClick={() => void serveOrder(order.id)}
-                  className={cn(
-                    'mt-3 flex h-16 w-full items-center justify-center gap-2.5 rounded-2xl bg-black text-[16px] font-black text-emerald-400 transition-all active:scale-[0.98]',
-                  )}
-                >
-                  <PackageCheck className="h-6 w-6" strokeWidth={2.5} />
-                  ОТДАНО РАННЕРУ
-                  <span className="text-[12px] font-bold opacity-60">
-                    ({pluralDishes(orderPieces(order))})
-                  </span>
-                </button>
               </div>
-            </article>
-          )
-        })}
+              <div className="shrink-0 text-right">
+                <div className="text-lg font-black tabular-nums leading-none text-emerald-300">
+                  ⏱ {formatElapsed(waiting)}
+                </div>
+                <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                  на раздаче
+                </div>
+              </div>
+            </header>
+
+            {/* Состав для раннера */}
+            <ul className="mt-3 flex flex-col gap-1 rounded-2xl bg-black/25 px-4 py-3">
+              {order.items.map((item) => (
+                <li
+                  key={item.id}
+                  className="text-[15px] font-extrabold leading-snug text-[#F5F1E8]"
+                >
+                  {item.qty}× {item.name}
+                  {item.garnishId && (
+                    <span className="font-bold text-zinc-400"> + {item.garnishName}</span>
+                  )}
+                  {item.comment && (
+                    <span className="font-bold text-amber-300"> «{item.comment}»</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+
+            <button
+              type="button"
+              onClick={() => void serveOrder(order.id)}
+              aria-label={`Отдано раннеру — ${order.tableLabel}`}
+              className="mt-3 flex h-[60px] w-full items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 text-[16px] font-black text-[#05140E] shadow-lg shadow-emerald-500/25 transition-all active:scale-[0.98]"
+            >
+              <PackageCheck className="h-6 w-6" strokeWidth={2.5} aria-hidden />
+              ОТДАНО РАННЕРУ
+              <span className="text-[12px] font-bold opacity-60">
+                ({pluralDishes(orderPieces(order))})
+              </span>
+            </button>
+          </article>
+        )
+      })}
     </section>
   )
 }

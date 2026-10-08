@@ -51,6 +51,18 @@ db.exec(`
     is_addendum     INTEGER NOT NULL DEFAULT 0,
     table_id        TEXT    NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS stoplist (
+    menu_item_id    TEXT PRIMARY KEY,
+    stopped         INTEGER NOT NULL DEFAULT 0,
+    remaining       INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS day_counters (
+    day             TEXT    NOT NULL,
+    menu_item_id    TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    qty             INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, menu_item_id)
+  );
   CREATE INDEX IF NOT EXISTS idx_orders_status     ON orders(status);
   CREATE INDEX IF NOT EXISTS idx_orders_served_day ON orders(served_day);
   CREATE INDEX IF NOT EXISTS idx_orders_table      ON orders(table_id);
@@ -70,14 +82,14 @@ export interface ServerMenuItem {
 export const SERVER_MENU: Record<string, ServerMenuItem> = {
   b1: { name: 'Овсяная каша со свежими фруктами', station: 'breakfast', coursePriority: 1, category: 'Завтраки' },
   b2: { name: 'Мини-сырники с муссом, сметаной и Nutella', station: 'breakfast', coursePriority: 1, category: 'Завтраки' },
-  b3: { name: 'Классический омлет с сыром и свежими овощами', station: 'breakfast', coursePriority: 1, category: 'Завтраки' },
+  b3: { name: 'Классический омлет с сыром и овощами', station: 'breakfast', coursePriority: 1, category: 'Завтраки' },
   s1: { name: 'Ростбиф с листьями салата', station: 'cold', coursePriority: 1, category: 'САЛАТЫ' },
   s2: { name: 'Копченая свекла со страчателлой', station: 'cold', coursePriority: 1, category: 'САЛАТЫ' },
   s3: { name: 'Салат с гравлаксом из лосося', station: 'cold', coursePriority: 1, category: 'САЛАТЫ' },
   ha1: { name: 'Сибас в гремолате с цукини', station: 'hot_appetizer', coursePriority: 2, category: 'ГОРЯЧИЕ ЗАКУСКИ' },
   ha2: { name: 'Драники из батата с гуакамоле', station: 'hot_appetizer', coursePriority: 2, category: 'ГОРЯЧИЕ ЗАКУСКИ' },
   ha3: { name: 'Кокиль с телятиной', station: 'hot_appetizer', coursePriority: 2, category: 'ГОРЯЧИЕ ЗАКУСКИ' },
-  m1: { name: 'Утиная грудка', station: 'hot_main', coursePriority: 3, category: 'ГОРЯЧИЕ БЛЮДА' },
+  m1: { name: 'Утиная грудка с соусом вишня-мадера', station: 'hot_main', coursePriority: 3, category: 'ГОРЯЧИЕ БЛЮДА' },
   m2: { name: 'Брискет из говядины', station: 'hot_main', coursePriority: 3, category: 'ГОРЯЧИЕ БЛЮДА' },
   m3: { name: 'Креветки в катаифи', station: 'hot_main', coursePriority: 3, category: 'ГОРЯЧИЕ БЛЮДА' },
   sd1: { name: 'Картофель беби с розмарином', station: 'hot_main', coursePriority: 3, category: 'ГАРНИРЫ', isGarnish: true },
@@ -91,21 +103,15 @@ export const SERVER_MENU: Record<string, ServerMenuItem> = {
 const GARNISH_IDS = new Set(['sd1', 'sd2', 'sd3'])
 const ATTACHABLE_CATEGORIES = new Set(['ГОРЯЧИЕ ЗАКУСКИ', 'ГОРЯЧИЕ БЛЮДА'])
 
-/* ---------- столы: 1–25 + Банкет 1/2 ---------- */
+/* ---------- столы: ровно 1–12 ---------- */
 
 export const TABLE_IDS: ReadonlySet<string> = new Set(
-  [
-    ...Array.from({ length: 25 }, (_, i) => `t${i + 1}`),
-    'banquet1',
-    'banquet2',
-  ],
+  Array.from({ length: 12 }, (_, i) => `t${i + 1}`),
 )
 
 export function tableLabel(tableId: string): string {
-  if (tableId === 'banquet1') return 'Банкет 1'
-  if (tableId === 'banquet2') return 'Банкет 2'
   const n = Number(tableId.replace(/^t/, ''))
-  return Number.isInteger(n) ? `Стол ${n}` : tableId
+  return Number.isInteger(n) && n >= 1 && n <= 12 ? `Стол ${n}` : tableId
 }
 
 /* ---------- типы ---------- */
@@ -182,11 +188,17 @@ export interface ApiOrder {
 
 export interface ApiAnalytics {
   date: string
+  /** заказано порций за сегодня (счётчик на отправке, включая гарниры к блюдам) */
+  orderedDishes: number
   servedOrders: number
   servedTables: number
-  totalDishes: number
   vipOrders: number
   items: { menuItemId: string; name: string; qty: number }[]
+}
+
+export interface ApiStopControl {
+  stopped: boolean
+  remaining: number | null
 }
 
 /* ---------- санитайзеры ---------- */
@@ -269,36 +281,46 @@ export function loadOrders(): ApiOrder[] {
   return [...active, ...served].map(hydrate)
 }
 
+/** Аналитика дня: счётчики ЗАКАЗАННЫХ порций (растут в момент отправки) + сводка отданных */
 export function loadAnalytics(): ApiAnalytics {
   const today = dayKey(Date.now())
+  const rows = db
+    .prepare(`SELECT menu_item_id, name, qty FROM day_counters WHERE day = ? ORDER BY qty DESC`)
+    .all(today) as { menu_item_id: string; name: string; qty: number }[]
+  const items = rows
+    .map((r) => ({ menuItemId: r.menu_item_id, name: r.name, qty: Number(r.qty) }))
+    .filter((i) => i.qty > 0)
   const served = db
     .prepare(`SELECT * FROM orders WHERE status = 'served' AND served_day = ?`)
     .all(today) as OrderRow[]
-  const ids = served.map((o) => o.id)
-  let totalDishes = 0
-  const perItem = new Map<string, { menuItemId: string; name: string; qty: number }>()
-  if (ids.length) {
-    const placeholders = ids.map(() => '?').join(', ')
-    const rows = db
-      .prepare(`SELECT menu_item_id, name, SUM(qty) AS qty FROM order_items WHERE order_id IN (${placeholders}) GROUP BY menu_item_id ORDER BY qty DESC`)
-      .all(...ids) as { menu_item_id: string; name: string; qty: number }[]
-    for (const r of rows) {
-      totalDishes += Number(r.qty)
-      perItem.set(r.menu_item_id, { menuItemId: r.menu_item_id, name: r.name, qty: Number(r.qty) })
-    }
-  }
   return {
     date: today,
+    orderedDishes: items.reduce((acc, i) => acc + i.qty, 0),
     servedOrders: served.length,
     servedTables: new Set(served.map((o) => o.table_id)).size,
-    totalDishes,
     vipOrders: served.filter((o) => o.is_vip === 1).length,
-    items: [...perItem.values()].slice(0, 60),
+    items,
   }
 }
 
-export function loadState(): { orders: ApiOrder[]; analytics: ApiAnalytics } {
-  return { orders: loadOrders(), analytics: loadAnalytics() }
+/** Стоп-лист и остатки (только блюда с активным контролем) */
+export function loadStopList(): Record<string, ApiStopControl> {
+  const rows = db
+    .prepare(`SELECT menu_item_id, stopped, remaining FROM stoplist`)
+    .all() as { menu_item_id: string; stopped: number; remaining: number | null }[]
+  const out: Record<string, ApiStopControl> = {}
+  for (const r of rows) {
+    const stopped = r.stopped === 1
+    const remaining =
+      r.remaining == null ? null : Math.max(0, Math.min(999, Math.floor(Number(r.remaining))))
+    if (!stopped && remaining == null) continue
+    out[r.menu_item_id] = { stopped, remaining }
+  }
+  return out
+}
+
+export function loadState(): { orders: ApiOrder[]; analytics: ApiAnalytics; stopList: Record<string, ApiStopControl> } {
+  return { orders: loadOrders(), analytics: loadAnalytics(), stopList: loadStopList() }
 }
 
 /* ---------- создание заказа / дозаказ ---------- */
@@ -383,6 +405,22 @@ export function submitOrder(input: SubmitInput): SubmitResult {
     else merged.set(key, { menuItemId, qty, comment, garnishId, standalone: wantsStandalone })
   }
 
+  // стоп-лист и остатки: суммарная потребность (блюдо + привязанные гарниры)
+  const needed = new Map<string, number>()
+  for (const m of merged.values()) {
+    needed.set(m.menuItemId, (needed.get(m.menuItemId) ?? 0) + m.qty)
+    if (m.garnishId) needed.set(m.garnishId, (needed.get(m.garnishId) ?? 0) + m.qty)
+  }
+  const readStop = db.prepare(`SELECT stopped, remaining FROM stoplist WHERE menu_item_id = ?`)
+  for (const [id, qty] of needed) {
+    const row = readStop.get(id) as { stopped: number; remaining: number | null } | undefined
+    const name = SERVER_MENU[id]?.name ?? id
+    if (row?.stopped === 1) throw new Error(`«${name}» — в стоп-листе`)
+    if (row?.remaining != null && qty > row.remaining) {
+      throw new Error(`«${name}» — осталось ${row.remaining}, в заказе ${qty}`)
+    }
+  }
+
   // активный заказ стола (не отдан) → дозаказ
   const activeOrder = db
     .prepare(`SELECT * FROM orders WHERE table_id = ? AND status != 'served' ORDER BY sent_at DESC LIMIT 1`)
@@ -393,6 +431,16 @@ export function submitOrder(input: SubmitInput): SubmitResult {
     `INSERT INTO order_items
        (id, order_id, menu_item_id, name, qty, comment, station, course_priority, category, status, garnish_id, garnish_name, is_standalone, is_addendum, table_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+  const bumpCounter = db.prepare(
+    `INSERT INTO day_counters (day, menu_item_id, name, qty) VALUES (?, ?, ?, ?)
+     ON CONFLICT(day, menu_item_id) DO UPDATE SET qty = qty + excluded.qty`,
+  )
+  const takeStock = db.prepare(
+    `UPDATE stoplist
+       SET remaining = MAX(0, remaining - ?),
+           stopped = CASE WHEN remaining - ? <= 0 THEN 1 ELSE stopped END
+     WHERE menu_item_id = ? AND remaining IS NOT NULL`,
   )
 
   const tx = db.transaction(() => {
@@ -428,6 +476,12 @@ export function submitOrder(input: SubmitInput): SubmitResult {
           m.standalone ? 1 : 0, 0, tableId,
         )
       }
+    }
+    // аналитика дня: счётчик заказанных порций (включая гарниры к блюдам)
+    const today = dayKey(now)
+    for (const [id, qty] of needed) {
+      bumpCounter.run(today, id, SERVER_MENU[id]?.name ?? id, qty)
+      takeStock.run(qty, qty, id)
     }
   })
   tx()
@@ -524,16 +578,72 @@ export function toggleItem(itemId: unknown): ToggleResult {
   return { ok: true, order: hydrate(findOrder(order.id)!), becameReady }
 }
 
-/** Утренний сброс: пин-код 0000 → чистый лист */
+/** Утренний сброс: пин-код 0000 → чистый лист (заказы, счётчики, стоп-лист) */
 export function resetShift(pin: unknown): boolean {
   const p = String(pin ?? '')
   if (p !== '0000') return false
   const tx = db.transaction(() => {
     db.exec(`DELETE FROM order_items`)
     db.exec(`DELETE FROM orders`)
+    db.exec(`DELETE FROM stoplist`)
+    db.exec(`DELETE FROM day_counters`)
   })
   tx()
   return true
+}
+
+/* ---------- стоп-лист и остатки (управление шефа) ---------- */
+
+export interface StopMutationResult {
+  menuItemId: string
+  name: string
+  stopped: boolean
+  remaining: number | null
+}
+
+function readStopRow(menuItemId: string): { stopped: number; remaining: number | null } | undefined {
+  return db
+    .prepare(`SELECT stopped, remaining FROM stoplist WHERE menu_item_id = ?`)
+    .get(menuItemId) as { stopped: number; remaining: number | null } | undefined
+}
+
+/** Тумблер «В СТОП» / «Снять со стопа» — мгновенно у всех официантов */
+export function setStop(menuItemId: unknown, stopped: unknown): StopMutationResult {
+  const id = String(menuItemId ?? '')
+  const menu = SERVER_MENU[id]
+  if (!menu) throw new Error('Неизвестное блюдо')
+  const stop = stopped === true
+  const current = readStopRow(id)
+  // «Снять со стопа» при остатке 0 — снимаем и лимит (блюдо снова без ограничений)
+  const remaining = !stop && current?.remaining === 0 ? null : (current?.remaining ?? null)
+  db.prepare(
+    `INSERT INTO stoplist (menu_item_id, stopped, remaining) VALUES (?, ?, ?)
+     ON CONFLICT(menu_item_id) DO UPDATE SET stopped = excluded.stopped, remaining = excluded.remaining`,
+  ).run(id, stop ? 1 : 0, remaining)
+  const row = readStopRow(id)!
+  return { menuItemId: id, name: menu.name, stopped: row.stopped === 1, remaining: row.remaining }
+}
+
+/** «Задать остаток»: число 0–999 или null (снять лимит). При 0 блюдо сразу в стопе. */
+export function setRemaining(menuItemId: unknown, remaining: unknown): StopMutationResult {
+  const id = String(menuItemId ?? '')
+  const menu = SERVER_MENU[id]
+  if (!menu) throw new Error('Неизвестное блюдо')
+  let rem: number | null = null
+  if (remaining !== null && remaining !== undefined && String(remaining).trim() !== '') {
+    const n = Number(remaining)
+    if (!Number.isFinite(n) || n < 0 || n > 999) throw new Error('Остаток — число от 0 до 999')
+    rem = Math.floor(n)
+  }
+  const forceStop = rem === 0 ? 1 : 0
+  db.prepare(
+    `INSERT INTO stoplist (menu_item_id, stopped, remaining) VALUES (?, ?, ?)
+     ON CONFLICT(menu_item_id) DO UPDATE SET
+       remaining = excluded.remaining,
+       stopped = CASE WHEN excluded.remaining = 0 THEN 1 ELSE stopped END`,
+  ).run(id, forceStop, rem)
+  const row = readStopRow(id)!
+  return { menuItemId: id, name: menu.name, stopped: row.stopped === 1, remaining: row.remaining }
 }
 
 /** Чистка старых данных (при старте сервиса) */
@@ -544,6 +654,7 @@ export function pruneOld(): void {
       `DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE served_day IS NOT NULL AND served_day < ?)`,
     ).run(cutoffDay)
     db.prepare(`DELETE FROM orders WHERE served_day IS NOT NULL AND served_day < ?`).run(cutoffDay)
+    db.prepare(`DELETE FROM day_counters WHERE day < ?`).run(cutoffDay)
   } catch {
     /* no-op */
   }

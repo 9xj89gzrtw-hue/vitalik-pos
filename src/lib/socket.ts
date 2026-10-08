@@ -46,6 +46,7 @@ export function initHubSocket(): Socket {
   s.on('vk:notify:ready', (n) => store().onReady(n))
   s.on('vk:notify:served', (n) => store().onServed(n))
   s.on('vk:notify:reset', () => store().onReset())
+  s.on('vk:notify:stoplist', (n) => store().onStoplist(n))
 
   return s
 }

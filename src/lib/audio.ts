@@ -71,6 +71,19 @@ export function playVipOrderBeep() {
   bellStrike(0.6, 1567.98) // G6
 }
 
+/**
+ * Кухня: ГРОМКИЙ цикличный зуммер нового заказа (по ТЗ — каждые 3 секунды,
+ * пока шеф не нажал «ПРИНЯТЬ»). Резкая двухтональная сирена ~1.3 с.
+ */
+export function playNewOrderBuzzer() {
+  // три очереди «писк-писк» на двух частотах — услышит вся кухня
+  for (let burst = 0; burst < 3; burst++) {
+    const d = burst * 0.44
+    tone(987.77, d, 0.18, 0.5, 'square')
+    tone(740, d + 0.2, 0.18, 0.5, 'square')
+  }
+}
+
 /** Зал: блюдо на раздаче — мягкий чайм «поднять телефон» */
 export function playReadyChime() {
   tone(1046.5, 0, 0.09, 0.14)

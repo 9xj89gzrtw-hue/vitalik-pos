@@ -1,113 +1,114 @@
 'use client'
 
-import { ChefHat, CircleCheckBig, Flame, Lock, ShoppingBag } from 'lucide-react'
+import { Check, ChefHat, Lock } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import { buildKitchenTicket, formatClock, formatElapsed, timerLevel } from '@/lib/derive'
 import type { Order, OrderItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { tableTitleOf } from './kitchen-utils'
 
 /* ============================================================
-   Тикет заказа на кухне: ультра-крупный шрифт, группировка по
-   цехам, 2 клика шефа: [ПРИНЯТЬ В РАБОТУ] → [ГОТОВО!].
-   Тап по блюду переключает готовность (для частичной выдачи).
+   Тикет заказа на кухне — читается с 1 метра.
+   sent    → янтарная пульсация, «ждёт N», [ПРИНЯТЬ В РАБОТУ].
+   cooking → таймер готовки, строки-кнопки [ГОТОВО!] ↔ откат.
+   Когда всё готово — заказ уходит в блок ВЫНОС (родитель).
    ============================================================ */
 
 export function TicketCard({ order, now }: { order: Order; now: number }) {
   const flash = useAppStore((s) => s.flash[order.id] ?? 0)
   const acceptOrder = useAppStore((s) => s.acceptOrder)
-  const readyOrder = useAppStore((s) => s.readyOrder)
   const toggleItem = useAppStore((s) => s.toggleItem)
 
-  const elapsed = now - order.sentAt
+  const sent = order.status === 'sent'
+  const startedAt = sent ? order.sentAt : (order.acceptedAt ?? order.sentAt)
+  const elapsed = Math.max(0, now - startedAt)
   const level = timerLevel(elapsed)
   const isNew = flash > now
-  const sent = order.status === 'sent'
   const { groups, addendumItems } = buildKitchenTicket(order)
+
+  const timerBox =
+    level === 'ok'
+      ? 'bg-emerald-500/15'
+      : level === 'warn'
+        ? 'bg-amber-500/15'
+        : 'bg-red-500/20 animate-pulse'
+  const timerText = sent
+    ? 'text-amber-400'
+    : level === 'ok'
+      ? 'text-emerald-400'
+      : level === 'warn'
+        ? 'text-amber-400'
+        : 'text-red-400'
 
   return (
     <article
       className={cn(
-        'overflow-hidden rounded-3xl border bg-[#161B23]',
-        order.isVIP ? 'vip-frame' : 'border-white/[0.07]',
-        isNew && 'ring-2 ring-yellow-300/70',
+        'overflow-hidden rounded-3xl bg-[#161922]',
+        order.isVIP ? 'vip-frame' : 'border border-[#262B35]',
+        sent && 'animate-pulse-bg',
+        isNew && !sent && 'ring-2 ring-[#D4AF37]/60',
       )}
     >
-      {/* Шапка тикета */}
-      <div
+      {/* Шапка: СТОЛ №N + таймер */}
+      <header
         className={cn(
-          'flex items-start justify-between gap-3 border-b border-white/[0.06] px-4 py-3',
-          order.isVIP && 'bg-gradient-to-r from-[#3A2412]/60 to-transparent',
+          'flex items-start justify-between gap-3 border-b border-[#262B35] px-4 py-3',
+          order.isVIP && 'bg-gradient-to-r from-[#3A2412]/50 to-transparent',
         )}
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-display text-[30px] font-black uppercase leading-none tracking-tight text-zinc-50">
-              {order.tableLabel}
+            <h3 className="text-3xl font-black uppercase leading-none tracking-tight text-[#F5F1E8]">
+              {tableTitleOf(order)}
             </h3>
-            {order.isVIP && (
-              <span className="vip-chip animate-pulse text-[12px]">⚡ ВИП / ЗАКАЗЧИК!</span>
-            )}
+            {order.isVIP && <span className="vip-chip">⭐ ВИП СТОЛ</span>}
           </div>
-          <div className="mt-2 flex items-center gap-2 text-xs font-bold text-zinc-400">
-            <span className="rounded-lg bg-[#242B36] px-2 py-1">{order.waiterName}</span>
-            <span className="tabular-nums text-zinc-500">в {formatClock(order.sentAt)}</span>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] font-bold text-zinc-400">
+            <span className="rounded-lg bg-[#232936] px-2 py-1 text-[15px] font-bold text-zinc-200">
+              {order.waiterName}
+            </span>
+            <span className="tabular-nums text-zinc-500">отправлен {formatClock(order.sentAt)}</span>
             {order.addendumCount > 0 && (
-              <span className="rounded-lg bg-amber-400/15 px-2 py-1 text-amber-300">
+              <span className="rounded-lg bg-[#F59E0B]/15 px-2 py-1 text-amber-300">
                 +{order.addendumCount} дозаказ
               </span>
             )}
           </div>
         </div>
-        <div
-          className={cn(
-            'shrink-0 rounded-2xl px-3 py-2 text-center',
-            level === 'ok' && 'bg-emerald-500/15',
-            level === 'warn' && 'bg-amber-500/15',
-            level === 'late' && 'animate-pulse bg-red-500/20',
-          )}
-        >
-          <div
-            className={cn(
-              'font-display text-2xl font-black tabular-nums leading-none',
-              level === 'ok' && 'text-emerald-400',
-              level === 'warn' && 'text-amber-400',
-              level === 'late' && 'text-red-400',
-            )}
-          >
+        <div className={cn('shrink-0 rounded-2xl px-3 py-2 text-center', timerBox)}>
+          <div className={cn('text-2xl font-black tabular-nums leading-none', timerText)}>
             {formatElapsed(elapsed)}
           </div>
           <div
             className={cn(
               'mt-1 text-[9px] font-black uppercase tracking-widest',
-              level === 'ok' && 'text-emerald-400/70',
-              level === 'warn' && 'text-amber-400/70',
-              level === 'late' && 'text-red-400/80',
+              sent ? 'text-amber-400/80' : level === 'late' ? 'text-red-400/80' : 'text-zinc-500',
             )}
           >
-            {level === 'late' ? 'опоздание!' : 'с отправки'}
+            {sent ? 'ждёт' : level === 'late' ? 'опоздание!' : 'готовка'}
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Комментарий к столу */}
+      {/* Комментарий к столу — заметный янтарный колл-аут */}
       {order.tableNote && (
-        <div className="border-b border-white/[0.06] bg-amber-400/10 px-4 py-2.5 text-[13px] font-extrabold leading-snug text-amber-300">
-          ❗ {order.tableNote}
+        <div className="border-b border-[#262B35] border-l-4 border-l-[#F59E0B] bg-[#F59E0B]/10 px-4 py-2.5 text-[14px] font-extrabold leading-snug text-amber-300">
+          💬 {order.tableNote}
         </div>
       )}
 
       {/* Позиции по цехам */}
       <div className="flex flex-col gap-3 px-4 py-3">
         {groups.map((group) => (
-          <section key={group.title}>
+          <section key={group.title} aria-label={group.title}>
             <h4 className="mb-1.5 flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-zinc-500">
               <span className="h-[2px] w-3 rounded-full bg-zinc-600" aria-hidden />
               {group.title}
-              <span className="ml-auto rounded-md bg-[#242B36] px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-400">
+              <span className="ml-auto rounded-md bg-[#232936] px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-400">
                 {group.items.reduce((acc, i) => acc + i.qty, 0)} шт
               </span>
             </h4>
-            <ul className="flex flex-col gap-1">
+            <ul className="flex flex-col gap-2">
               {group.items.map((item) => (
                 <KitchenItemRow
                   key={item.id}
@@ -120,14 +121,20 @@ export function TicketCard({ order, now }: { order: Order; now: number }) {
           </section>
         ))}
 
-        {/* Блок дозаказа */}
+        {/* Блок ДОЗАКАЗ */}
         {addendumItems.length > 0 && (
-          <section className="rounded-2xl border border-dashed border-amber-400/45 bg-amber-400/[0.07] p-2.5">
+          <section
+            className="rounded-2xl border border-dashed border-[#F59E0B]/45 bg-[#F59E0B]/[0.06] p-2.5"
+            aria-label="Дозаказ к столу"
+          >
             <h4 className="mb-1.5 flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-amber-300">
-              <ShoppingBag className="h-3.5 w-3.5" />
-              Дозаказ к столу
+              <span className="h-[2px] w-3 rounded-full bg-[#F59E0B]/60" aria-hidden />
+              ДОЗАКАЗ
+              <span className="ml-auto rounded-md bg-[#F59E0B]/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-300">
+                {addendumItems.reduce((acc, i) => acc + i.qty, 0)} шт
+              </span>
             </h4>
-            <ul className="flex flex-col gap-1">
+            <ul className="flex flex-col gap-2">
               {addendumItems.map((item) => (
                 <KitchenItemRow
                   key={item.id}
@@ -141,34 +148,26 @@ export function TicketCard({ order, now }: { order: Order; now: number }) {
         )}
       </div>
 
-      {/* Действия шефа */}
-      <div className="border-t border-white/[0.06] p-3">
-        {sent ? (
+      {/* Действие шефа: принять новый заказ */}
+      {sent && (
+        <div className="border-t border-[#262B35] p-3">
           <button
             type="button"
             onClick={() => void acceptOrder(order.id)}
-            className="flex h-16 w-full items-center justify-center gap-2.5 rounded-2xl bg-sky-400 text-[16px] font-black text-black shadow-lg shadow-sky-500/25 transition-all active:scale-[0.98]"
+            aria-label={`Принять в работу — ${order.tableLabel}`}
+            className="flex h-[64px] w-full items-center justify-center gap-2.5 rounded-2xl bg-[#F59E0B] text-[17px] font-black text-[#201400] shadow-lg shadow-amber-500/25 transition-all active:scale-[0.98]"
           >
-            <ChefHat className="h-6 w-6" strokeWidth={2.5} />
+            <ChefHat className="h-6 w-6" strokeWidth={2.5} aria-hidden />
             ПРИНЯТЬ В РАБОТУ
             <span className="text-[12px] font-bold opacity-60">официант сразу увидит</span>
           </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void readyOrder(order.id)}
-            className="flex h-16 w-full items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 text-[16px] font-black text-black shadow-lg shadow-emerald-500/25 transition-all active:scale-[0.98]"
-          >
-            <CircleCheckBig className="h-6 w-6" strokeWidth={2.5} />
-            ГОТОВО! — ВСЁ НА РАЗДАЧУ
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </article>
   )
 }
 
-/* Строка блюда на кухне: читается с 1 метра, тап = готово */
+/* Строка блюда: ОЧЕНЬ КРУПНЫЙ текст, тап = готово, повторный тап = откат */
 function KitchenItemRow({
   item,
   locked,
@@ -179,62 +178,73 @@ function KitchenItemRow({
   onToggle: () => void
 }) {
   const ready = item.status === 'ready'
+
   return (
     <li>
       <button
         type="button"
         onClick={locked ? undefined : onToggle}
         disabled={locked}
+        aria-label={`${item.qty} × ${item.name}${ready ? ' — готово, тап вернёт в работу' : ' — отметить готовым'}`}
         className={cn(
-          'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all',
-          locked ? 'cursor-not-allowed opacity-70' : 'active:scale-[0.99]',
-          ready ? 'bg-emerald-500/10' : 'bg-[#0F1115] hover:bg-[#1A2029]',
+          'flex min-h-[56px] w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition-all',
+          locked ? 'cursor-not-allowed opacity-60' : 'active:scale-[0.98]',
+          ready
+            ? 'border-emerald-500/50 bg-emerald-500/15'
+            : 'border-[#262B35] bg-[#0F1115]',
         )}
-        aria-label={`${item.qty} × ${item.name}${ready ? ' — готово' : ''}`}
       >
-        <span
-          className={cn(
-            'grid h-11 w-11 shrink-0 place-items-center rounded-xl text-lg font-black',
-            ready
-              ? 'bg-emerald-500 text-black'
-              : locked
-                ? 'bg-[#242B36] text-zinc-600'
-                : 'bg-amber-500/20 text-amber-400',
-          )}
-        >
-          {ready ? (
-            <CircleCheckBig className="h-6 w-6" strokeWidth={2.5} />
-          ) : locked ? (
-            <Lock className="h-5 w-5" />
-          ) : (
-            <Flame className="h-6 w-6 animate-pulse" />
-          )}
-        </span>
         <span className="min-w-0 flex-1">
-          <span
-            className={cn(
-              'block font-display text-[19px] font-black leading-tight',
-              ready ? 'text-emerald-300 line-through decoration-2' : 'text-zinc-50',
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <span
+              className={cn(
+                'text-xl font-black leading-tight',
+                ready ? 'text-emerald-300 line-through decoration-[3px]' : 'text-[#F5F1E8]',
+              )}
+            >
+              {item.qty}× {item.name}
+            </span>
+            {item.isAddendum && (
+              <span className="rounded-full bg-[#F59E0B]/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-300">
+                ДОЗАКАЗ
+              </span>
             )}
-          >
-            {item.qty}× {item.name}
           </span>
           {item.garnishId && (
-            <span className="mt-0.5 block text-[13px] font-bold text-zinc-400">
-              ↳ Гарнир: {item.garnishName}
+            <span className="mt-0.5 block text-base font-semibold text-zinc-400">
+              + {item.garnishName}
             </span>
           )}
           {item.standalone && (
-            <span className="mt-0.5 block text-[13px] font-bold text-sky-300/80">
-              ↳ отдельное блюдо
+            <span className="mt-0.5 block text-sm font-bold text-zinc-500">
+              гарнир отдельным блюдом
             </span>
           )}
           {item.comment && (
-            <span className="mt-0.5 block text-[13px] font-extrabold text-amber-300">
-              ❗ {item.comment}
+            <span className="mt-0.5 block text-base font-extrabold text-amber-300">
+              «{item.comment}»
             </span>
           )}
         </span>
+
+        {/* Правый край: замок (ждёт) / ГОТОВО! / ✓ с откатом */}
+        {locked ? (
+          <span className="flex shrink-0 flex-col items-center gap-1 text-zinc-600">
+            <Lock className="h-5 w-5" aria-hidden />
+            <span className="text-[9px] font-black uppercase tracking-wide">ждёт</span>
+          </span>
+        ) : ready ? (
+          <span className="flex shrink-0 flex-col items-center gap-0.5" aria-hidden>
+            <Check className="h-8 w-8 text-emerald-400" strokeWidth={3} />
+            <span className="text-[9px] font-black uppercase tracking-wide text-emerald-400/80">
+              тап — вернуть
+            </span>
+          </span>
+        ) : (
+          <span className="grid h-[52px] w-[108px] shrink-0 place-items-center rounded-xl bg-emerald-500 text-[15px] font-black text-[#05140E]">
+            ГОТОВО!
+          </span>
+        )}
       </button>
     </li>
   )

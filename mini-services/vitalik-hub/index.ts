@@ -5,6 +5,8 @@ import {
   readyOrder,
   resetShift,
   serveOrder,
+  setRemaining,
+  setStop,
   submitOrder,
   tableLabel,
   toggleItem,
@@ -21,11 +23,13 @@ import {
        vk:order:ready   { orderId }        — ГОТОВО! всё на раздаче
        vk:order:serve   { orderId }        — ОТДАНО РАННЕРУ
        vk:item:toggle   { itemId }         — тап по блюду (cooking ↔ ready)
+       vk:stop:set      { menuItemId, stopped }        — тумблер стоп-листа
+       vk:stop:remaining { menuItemId, remaining }     — задать остаток
        vk:shift:reset   { pin }            — утренний сброс (пин 0000)
        vk:state:fetch                       — прислать состояние только мне
      server → client:
-       vk:state          { orders, analytics }  — на подключение и после мутаций
-       vk:notify:new-order / accepted / ready / served / reset
+       vk:state          { orders, analytics, stopList } — на подключение и после мутаций
+       vk:notify:new-order / accepted / ready / served / reset / stoplist
    ============================================================ */
 
 const PORT = 3003
@@ -168,6 +172,32 @@ io.on('connection', (socket) => {
       ack?.({ ok: true })
       broadcastState()
       io.emit('vk:notify:reset', {})
+    } catch (e) {
+      ack?.({ ok: false, error: e instanceof Error ? e.message : 'Ошибка' })
+    }
+  })
+
+  socket.on('vk:stop:set', (payload: unknown, ack?: (res: unknown) => void) => {
+    try {
+      const p = (payload ?? {}) as { menuItemId?: unknown; stopped?: unknown }
+      const res = setStop(p.menuItemId, p.stopped)
+      console.log(`[vitalik] стоп-лист: ${res.name} → ${res.stopped ? 'СТОП' : 'доступен'}`)
+      ack?.({ ok: true })
+      broadcastState()
+      io.emit('vk:notify:stoplist', res)
+    } catch (e) {
+      ack?.({ ok: false, error: e instanceof Error ? e.message : 'Ошибка' })
+    }
+  })
+
+  socket.on('vk:stop:remaining', (payload: unknown, ack?: (res: unknown) => void) => {
+    try {
+      const p = (payload ?? {}) as { menuItemId?: unknown; remaining?: unknown }
+      const res = setRemaining(p.menuItemId, p.remaining)
+      console.log(`[vitalik] остаток: ${res.name} → ${res.remaining ?? 'без лимита'}${res.stopped ? ' (стоп)' : ''}`)
+      ack?.({ ok: true })
+      broadcastState()
+      io.emit('vk:notify:stoplist', res)
     } catch (e) {
       ack?.({ ok: false, error: e instanceof Error ? e.message : 'Ошибка' })
     }

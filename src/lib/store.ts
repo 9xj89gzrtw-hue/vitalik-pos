@@ -14,6 +14,8 @@ import type {
   Screen,
   StatusFilter,
   StatePayload,
+  StopList,
+  StoplistNotification,
   SubmitAck,
   SubmitPayload,
   TableDraft,
@@ -21,14 +23,7 @@ import type {
 } from './types'
 import { defaultPeriod, findMenuItem, GARNISH_IDS, TABLES } from './menu'
 import { emitAck } from './socket'
-import {
-  haptic,
-  playOrderBeep,
-  playReadyChime,
-  playResetBlip,
-  playSendConfirm,
-  playVipOrderBeep,
-} from './audio'
+import { haptic, playReadyChime, playResetBlip, playSendConfirm } from './audio'
 import { formatClock, orderPieces, pluralDishes } from './derive'
 
 /* ============================================================
@@ -37,20 +32,43 @@ import { formatClock, orderPieces, pluralDishes } from './derive'
    ============================================================ */
 
 const LS = {
-  screen: 'vk:screen',
-  drafts: 'vk:drafts',
-  outbox: 'vk:outbox',
-  state: 'vk:state',
-  sound: 'vk:sound',
-  kitchenMode: 'vk:kitchen-mode',
-  table: 'vk:table',
-  waiterTab: 'vk:waiter-tab',
-  waiterName: 'vk:waiter-name',
-  statusFilter: 'vk:status-filter',
+  screen: 'vitalik_pos_screen',
+  drafts: 'vitalik_pos_drafts',
+  outbox: 'vitalik_pos_outbox',
+  state: 'vitalik_pos_state',
+  sound: 'vitalik_pos_sound',
+  kitchenMode: 'vitalik_pos_kitchen_mode',
+  table: 'vitalik_pos_table',
+  waiterTab: 'vitalik_pos_waiter_tab',
+  waiterName: 'vitalik_pos_waiter',
+  statusFilter: 'vitalik_pos_status_filter',
 }
-const SS = { period: 'vk:period' }
+const SS = { period: 'vitalik_pos_period' }
+
+/* старые ключи прошлой версии — читаем для бесшовной миграции, пишем только новые */
+const LEGACY_KEYS: Record<string, string> = {
+  [LS.screen]: 'vk:screen',
+  [LS.drafts]: 'vk:drafts',
+  [LS.outbox]: 'vk:outbox',
+  [LS.state]: 'vk:state',
+  [LS.sound]: 'vk:sound',
+  [LS.kitchenMode]: 'vk:kitchen-mode',
+  [LS.table]: 'vk:table',
+  [LS.waiterTab]: 'vk:waiter-tab',
+  [LS.waiterName]: 'vk:waiter-name',
+  [LS.statusFilter]: 'vk:status-filter',
+}
 
 const VALID_TABLE_IDS = new Set(TABLES.map((t) => t.id))
+
+const EMPTY_ANALYTICS: Analytics = {
+  date: '',
+  orderedDishes: 0,
+  servedOrders: 0,
+  servedTables: 0,
+  vipOrders: 0,
+  items: [],
+}
 
 function persistJson(key: string, value: unknown) {
   try {
@@ -62,10 +80,37 @@ function persistJson(key: string, value: unknown) {
 function readJson<T>(key: string): T | undefined {
   try {
     const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : undefined
+    if (raw) return JSON.parse(raw) as T
+    const legacy = LEGACY_KEYS[key]
+    if (legacy) {
+      const old = localStorage.getItem(legacy)
+      if (old) return JSON.parse(old) as T
+    }
+    return undefined
   } catch {
     return undefined
   }
+}
+
+/** Безопасная загрузка стоп-листа из внешнего payload-а */
+function sanitizeStopList(raw: unknown): StopList {
+  const out: StopList = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!findMenuItem(id) || !value || typeof value !== 'object') continue
+    const v = value as { stopped?: unknown; remaining?: unknown }
+    const stopped = v.stopped === true
+    const remNum = Number(v.remaining)
+    const remaining =
+      v.remaining === null || v.remaining === undefined
+        ? null
+        : Number.isFinite(remNum)
+          ? Math.max(0, Math.min(999, Math.floor(remNum)))
+          : null
+    if (!stopped && remaining === null) continue
+    out[id] = { stopped, remaining }
+  }
+  return out
 }
 
 const FLASH_TTL = 5200
@@ -84,6 +129,8 @@ interface AppStore {
   setConnection: (c: ConnectionState) => void
   orders: Order[]
   analytics: Analytics
+  /** стоп-лист и остатки блюд (с сервера, мгновенно у всех) */
+  stopList: StopList
   ingestState: (p: StatePayload) => void
 
   /* --- уведомления (звук/тосты по роли экрана) --- */
@@ -92,6 +139,7 @@ interface AppStore {
   onReady: (n: OrderBrief) => void
   onServed: (n: OrderBrief) => void
   onReset: () => void
+  onStoplist: (n: StoplistNotification) => void
 
   /* --- официант --- */
   waiterName: string
@@ -133,8 +181,10 @@ interface AppStore {
   readyOrder: (orderId: string) => Promise<void>
   serveOrder: (orderId: string) => Promise<void>
   toggleItem: (itemId: string) => Promise<void>
+  setStopDish: (menuItemId: string, stopped: boolean) => Promise<void>
+  setRemaining: (menuItemId: string, remaining: number | null) => Promise<void>
 
-  /* --- монитор --- */
+  /* --- аналитика --- */
   resetShift: (pin: string) => Promise<boolean>
 }
 
@@ -208,23 +258,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // кэш состояния (мгновенная отрисовка офлайн, сервер переопределит)
     const cached = readJson<StatePayload>(LS.state)
-    const storedScreen = readJson<Screen>(LS.screen)
+    const storedScreenRaw = readJson<string>(LS.screen)
     const storedTable = readJson<string>(LS.table)
     const storedWaiterName = readJson<string>(LS.waiterName)
+    const storedKitchenMode = readJson<KitchenMode>(LS.kitchenMode)
+    const kitchenMode: KitchenMode =
+      storedKitchenMode === 'batch' || storedKitchenMode === 'stoplist' ? storedKitchenMode : 'tickets'
+
+    // экран: 'monitor' прошлой версии → 'analytics'
+    const screen: Screen =
+      storedScreenRaw === 'kitchen' || storedScreenRaw === 'analytics'
+        ? storedScreenRaw
+        : storedScreenRaw === 'monitor'
+          ? 'analytics'
+          : 'waiter'
 
     set({
       hydrated: true,
-      screen: storedScreen === 'kitchen' || storedScreen === 'monitor' ? storedScreen : 'waiter',
+      screen,
       orders: cached?.orders ?? [],
-      analytics:
-        cached?.analytics ??
-        { date: '', servedOrders: 0, servedTables: 0, totalDishes: 0, vipOrders: 0, items: [] },
+      analytics: cached?.analytics ?? EMPTY_ANALYTICS,
+      stopList: sanitizeStopList(cached?.stopList),
       drafts: sanitizeDrafts(readJson(LS.drafts)),
       outbox: sanitizeOutbox(readJson(LS.outbox)),
       period,
       selectedTableId:
         typeof storedTable === 'string' && VALID_TABLE_IDS.has(storedTable) ? storedTable : 't1',
-      kitchenMode: readJson<KitchenMode>(LS.kitchenMode) === 'batch' ? 'batch' : 'tickets',
+      kitchenMode,
       soundEnabled: readJson<boolean>(LS.sound) ?? true,
       waiterTab: readJson<WaiterTab>(LS.waiterTab) === 'orders' ? 'orders' : 'menu',
       statusFilter: readJson<StatusFilter>(LS.statusFilter) === 'all' ? 'all' : 'mine',
@@ -247,13 +307,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setConnection: (connection) => set({ connection }),
 
   orders: [],
-  analytics: { date: '', servedOrders: 0, servedTables: 0, totalDishes: 0, vipOrders: 0, items: [] },
+  analytics: EMPTY_ANALYTICS,
+  stopList: {},
 
   ingestState: (p) => {
     const orders = Array.isArray(p?.orders) ? p.orders : []
     const analytics = p?.analytics ?? get().analytics
-    persistJson(LS.state, { orders, analytics })
-    set({ orders, analytics })
+    const stopList = sanitizeStopList(p?.stopList)
+    persistJson(LS.state, { orders, analytics, stopList })
+    set({ orders, analytics, stopList })
   },
 
   /* ---------------- уведомления ---------------- */
@@ -276,13 +338,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (changed) set({ flash: next })
       }, FLASH_TTL + 80)
 
-      if (state.soundEnabled) {
-        if (n.isVIP) playVipOrderBeep()
-        else playOrderBeep()
-      }
+      // звуковой сигнал — цикличный зуммер в экране кухни (пока не примут)
       haptic(n.isVIP ? [30, 60, 30, 60, 30] : [25, 60, 25])
       toast.success(
-        `${n.isAddendum ? 'Дозаказ' : 'Новый заказ'} · ${n.tableLabel}${n.isVIP ? ' ⚡ ВИП' : ''}`,
+        `${n.isAddendum ? 'Дозаказ' : 'Новый заказ'} · ${n.tableLabel}${n.isVIP ? ' ⭐ ВИП' : ''}`,
         { description: `${n.waiterName} · ${pluralDishes(n.pieces)}` },
       )
     }
@@ -308,7 +367,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       toast.success(`🟢 ${n.tableLabel} — НА РАЗДАЧЕ!`, {
         description: `Заберите блюда у окна выдачи · ${pluralDishes(n.pieces)}`,
       })
-    } else if (state.screen === 'monitor') {
+    } else if (state.screen === 'analytics') {
       toast.success(`🟢 ${n.tableLabel} — на раздаче`, { description: `Официант: ${n.waiterName}` })
     }
   },
@@ -337,8 +396,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
       drafts: {},
       outbox: [],
       orders: [],
-      analytics: { date: '', servedOrders: 0, servedTables: 0, totalDishes: 0, vipOrders: 0, items: [] },
+      stopList: {},
+      analytics: EMPTY_ANALYTICS,
     })
+  },
+
+  onStoplist: (n) => {
+    const state = get()
+    if (state.screen !== 'waiter') return
+    if (n.stopped) {
+      toast.warning(`🚫 ${n.name} — стоп-лист`, { description: 'Блюдо скрыто из меню зала' })
+    } else if (n.remaining != null) {
+      toast.info(`⚠️ ${n.name}: осталось ${n.remaining} шт.`, {
+        description: 'Считайте порции — при нуле блюдо уйдёт в стоп',
+      })
+    } else {
+      toast.success(`✅ ${n.name} снова доступен`, { description: 'Без лимита остатка' })
+    }
   },
 
   /* ---------------- ОФИЦИАНТ ---------------- */
@@ -503,6 +577,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
       toast.error('Выберите имя официанта', { description: 'Кухня должна знать, чей заказ' })
       return false
     }
+
+    // стоп-лист и остатки: сверка ДО отправки (суммарно по блюду + привязанным гарнирам)
+    const needed = new Map<string, number>()
+    for (const c of draft.items) {
+      needed.set(c.menuItemId, (needed.get(c.menuItemId) ?? 0) + c.qty)
+      if (c.garnishId) needed.set(c.garnishId, (needed.get(c.garnishId) ?? 0) + c.qty)
+    }
+    const violations: string[] = []
+    for (const [id, qty] of needed) {
+      const control = state.stopList[id]
+      const name = findMenuItem(id)?.name ?? id
+      if (control?.stopped) {
+        violations.push(`«${name}» — в стоп-листе`)
+      } else if (control?.remaining != null && qty > control.remaining) {
+        violations.push(`«${name}» — осталось ${control.remaining}, в чеке ${qty}`)
+      }
+    }
+    if (violations.length) {
+      haptic([25, 60, 25])
+      toast.error('Заказ не отправлен — стоп-лист', {
+        description: violations.slice(0, 3).join(' · '),
+      })
+      return false
+    }
+
     const pieces = draft.items.reduce((acc, c) => acc + c.qty, 0)
     const isAddendum = state.orders.some((o) => o.tableId === tableId && o.status !== 'served')
     const tableLabel =
@@ -547,7 +646,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         haptic([14, 50, 24])
         toast.success(
           isAddendum ? 'Дозаказ отправлен на кухню' : 'Заказ отправлен! 🟡 Ждёт подтверждения шефа',
-          { description: `${tableLabel} · ${pluralDishes(pieces)}${draft.vip ? ' · ⚡ ВИП' : ''}` },
+          { description: `${tableLabel} · ${pluralDishes(pieces)}${draft.vip ? ' · ⭐ ВИП' : ''}` },
         )
         set({ waiterTab: 'orders' })
         return true
@@ -649,7 +748,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  /* ---------------- МОНИТОР ---------------- */
+  setStopDish: async (menuItemId, stopped) => {
+    haptic(10)
+    try {
+      const res = await emitAck<{ ok: boolean; error?: string }>('vk:stop:set', { menuItemId, stopped })
+      if (!res?.ok) toast.error('Не удалось изменить стоп-лист', { description: res?.error })
+    } catch {
+      toast.error('Нет связи с сервером')
+    }
+  },
+
+  setRemaining: async (menuItemId, remaining) => {
+    haptic(10)
+    try {
+      const res = await emitAck<{ ok: boolean; error?: string }>('vk:stop:remaining', {
+        menuItemId,
+        remaining,
+      })
+      if (!res?.ok) toast.error('Не удалось задать остаток', { description: res?.error })
+    } catch {
+      toast.error('Нет связи с сервером')
+    }
+  },
+
+  /* ---------------- АНАЛИТИКА ---------------- */
 
   resetShift: async (pin) => {
     try {

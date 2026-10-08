@@ -4,17 +4,13 @@ import type { CoursePriority, MenuItem, Period, Station, TableInfo } from './typ
    ВИТАЛИК — меню ресторана, столы, имена официантов, пресеты
    ============================================================ */
 
-/** Столы 1–25 + Банкет 1 / Банкет 2 */
-export const TABLES: TableInfo[] = [
-  ...Array.from({ length: 25 }, (_, i) => ({
-    id: `t${i + 1}`,
-    label: `Стол ${i + 1}`,
-    short: String(i + 1),
-    banquet: false,
-  })),
-  { id: 'banquet1', label: 'Банкет 1', short: 'Б1', banquet: true },
-  { id: 'banquet2', label: 'Банкет 2', short: 'Б2', banquet: true },
-]
+/** Столы 1–12 (ровно двенадцать) */
+export const TABLES: TableInfo[] = Array.from({ length: 12 }, (_, i) => ({
+  id: `t${i + 1}`,
+  label: `Стол ${i + 1}`,
+  short: String(i + 1),
+  banquet: false,
+}))
 
 export const TABLES_BY_ID: ReadonlyMap<string, TableInfo> = new Map(TABLES.map((t) => [t.id, t]))
 
@@ -26,11 +22,11 @@ export function tableShortOf(tableId: string): string {
   return TABLES_BY_ID.get(tableId)?.short ?? tableId
 }
 
-/** Быстрый выбор имени официанта (плюс своё имя) */
-export const WAITER_NAMES: readonly string[] = ['АННА', 'МАРИЯ', 'ИВАН', 'ДМИТРИЙ', 'ОЛЬГА']
+/** Официанты — ровно трое */
+export const WAITER_NAMES: readonly string[] = ['Саша', 'Денис', 'Вова']
 
 /** Быстрые комментарии к блюду (в чеке) */
-export const QUICK_NOTES: readonly string[] = ['Без лука', 'Без соуса', 'Без сахара', 'С собой']
+export const QUICK_NOTES: readonly string[] = ['Без лука', 'Без соуса', 'Без сахара']
 
 /** Пресеты комментария к столу */
 export const TABLE_NOTE_PRESETS: readonly string[] = [
@@ -68,7 +64,7 @@ const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
         items: [
           { id: 'b1', name: 'Овсяная каша со свежими фруктами', time: '8 мин' },
           { id: 'b2', name: 'Мини-сырники с муссом, сметаной и Nutella', time: '12 мин' },
-          { id: 'b3', name: 'Классический омлет с сыром и свежими овощами', time: '10 мин' },
+          { id: 'b3', name: 'Классический омлет с сыром и овощами', time: '10 мин' },
         ],
       },
     ],
@@ -131,7 +127,7 @@ const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
         station: 'hot_main',
         course_priority: 3,
         items: [
-          { id: 'm1', name: 'Утиная грудка', description: 'С соусом из вишни и Мадеры', time: '18 мин' },
+          { id: 'm1', name: 'Утиная грудка с соусом вишня-мадера', description: 'С соусом из вишни и Мадеры', time: '18 мин' },
           {
             id: 'm2',
             name: 'Брискет из говядины',

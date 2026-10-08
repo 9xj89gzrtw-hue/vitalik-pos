@@ -1,14 +1,14 @@
-import type { Order, OrderItem, OrderStatus } from './types'
+import type { Order, OrderItem, OrderStatus, StopControl, StopList } from './types'
 import { DATIVE_NAMES, tableShortOf } from './menu'
 
 /* ============================================================
    ВИТАЛИК — производные структуры: стадии заказа, радар столов,
-   группировка тикетов кухни, сводка цехов, таймеры.
+   группировка тикетов кухни, сводка цехов, таймеры, стоп-лист.
    ============================================================ */
 
-/* ---------- 5-стадийная шкала «Анти-паника» ---------- */
+/* ---------- 3-стадийная шкала для зала ---------- */
 
-export type StageKey = 'sent' | 'accepted' | 'cooking' | 'ready' | 'served'
+export type StageKey = 'sent' | 'cooking' | 'ready'
 
 export interface StageState {
   key: StageKey
@@ -19,19 +19,16 @@ export interface StageState {
 }
 
 export const STAGE_LABELS: Record<StageKey, string> = {
-  sent: 'Отправлен',
-  accepted: 'Принят шефом',
+  sent: 'В очереди',
   cooking: 'Готовится',
-  ready: 'На раздаче',
-  served: 'Отдано в зал',
+  ready: 'НА РАЗДАЧЕ',
 }
 
+/** ⏳ В очереди → 🔥 Готовится → 🟢 ГОТОВО НА РАЗДАЧЕ (served = всё пройдено) */
 export function orderStages(o: Order): StageState[] {
   const st = o.status
-  const accepted = o.acceptedAt != null || (st !== 'sent' && st !== 'served')
   return [
     { key: 'sent', label: STAGE_LABELS.sent, reached: true, active: st === 'sent', time: o.sentAt },
-    { key: 'accepted', label: STAGE_LABELS.accepted, reached: accepted, active: false, time: o.acceptedAt },
     {
       key: 'cooking',
       label: STAGE_LABELS.cooking,
@@ -46,8 +43,22 @@ export function orderStages(o: Order): StageState[] {
       active: st === 'ready',
       time: o.readyAt,
     },
-    { key: 'served', label: STAGE_LABELS.served, reached: st === 'served', active: st === 'served', time: o.servedAt },
   ]
+}
+
+/* ---------- стоп-лист и остатки ---------- */
+
+const NO_STOP: StopControl = { stopped: false, remaining: null }
+
+/** Текущее состояние блюда в стоп-листе (с безопасным дефолтом) */
+export function stopInfo(stopList: StopList, menuItemId: string): StopControl {
+  return stopList?.[menuItemId] ?? NO_STOP
+}
+
+/** Блюдо доступно к заказу? */
+export function isDishAvailable(stopList: StopList, menuItemId: string): boolean {
+  const c = stopInfo(stopList, menuItemId)
+  return !c.stopped && (c.remaining == null || c.remaining > 0)
 }
 
 /* ---------- выборки ---------- */
@@ -237,6 +248,11 @@ export function buildBatch(orders: Order[]): BatchSection[] {
 }
 
 /* ---------- таймеры и форматирование ---------- */
+
+/** Позиции блюда, готовые к выносу (галочки в статусе стола) */
+export function readyPieces(o: Order): number {
+  return o.items.filter((i) => i.status === 'ready').reduce((acc, i) => acc + i.qty, 0)
+}
 
 /** «12:35» — минуты:секунды с момента */
 export function formatElapsed(ms: number): string {

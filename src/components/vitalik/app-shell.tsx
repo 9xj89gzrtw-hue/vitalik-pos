@@ -8,7 +8,7 @@ import { installAudioUnlock } from '@/lib/audio'
 import { BottomNav } from './bottom-nav'
 import { WaiterScreen } from './waiter/waiter-screen'
 import { KitchenScreen } from './kitchen/kitchen-screen'
-import { MonitorScreen } from './monitor/monitor-screen'
+import { AnalyticsScreen } from './analytics/analytics-screen'
 
 /* ============================================================
    ВИТАЛИК — оболочка приложения: гидрация, socket, экраны.
@@ -26,12 +26,12 @@ export function AppShell() {
 
   if (!hydrated) {
     return (
-      <div className="grid min-h-dvh place-items-center bg-[#0F1115]">
+      <div className="grid min-h-dvh place-items-center bg-[#0D0F12]">
         <div className="flex flex-col items-center gap-3">
-          <span className="relative grid h-16 w-16 place-items-center rounded-3xl bg-emerald-500/15">
-            <BellRing className="h-8 w-8 animate-pulse text-emerald-400" />
+          <span className="relative grid h-16 w-16 place-items-center rounded-3xl bg-[#D4AF37]/15">
+            <BellRing className="h-8 w-8 animate-pulse text-[#D4AF37]" />
           </span>
-          <span className="font-display text-2xl font-extrabold tracking-tight text-zinc-100">ВИТАЛИК</span>
+          <span className="font-logo text-2xl font-extrabold tracking-tight text-[#F5F1E8]">ВИТАЛИК</span>
           <span className="text-xs text-zinc-500">Загрузка смены…</span>
         </div>
       </div>
@@ -39,11 +39,11 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#0F1115] text-zinc-100 antialiased">
+    <div className="min-h-dvh bg-[#0D0F12] text-[#F5F1E8] antialiased">
       <div className="mx-auto w-full max-w-[520px] px-4 pb-[calc(104px+env(safe-area-inset-bottom))] pt-3">
         {screen === 'waiter' && <WaiterScreen />}
         {screen === 'kitchen' && <KitchenScreen />}
-        {screen === 'monitor' && <MonitorScreen />}
+        {screen === 'analytics' && <AnalyticsScreen />}
       </div>
       <BottomNav />
     </div>

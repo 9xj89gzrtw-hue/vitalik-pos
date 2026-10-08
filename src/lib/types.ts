@@ -3,7 +3,7 @@
    ============================================================ */
 
 /** Активный экран (нижняя навигация, доступна всем в 1 тап) */
-export type Screen = 'waiter' | 'kitchen' | 'monitor'
+export type Screen = 'waiter' | 'kitchen' | 'analytics'
 
 export type Period = 'breakfast' | 'lunch'
 
@@ -23,7 +23,7 @@ export type ItemStatus = 'queued' | 'cooking' | 'ready'
  */
 export type OrderStatus = 'sent' | 'cooking' | 'ready' | 'served'
 
-export type KitchenMode = 'tickets' | 'batch'
+export type KitchenMode = 'tickets' | 'stoplist' | 'batch'
 
 export type WaiterTab = 'menu' | 'orders'
 
@@ -117,12 +117,26 @@ export interface Order {
 
 export interface Analytics {
   date: string
+  /** сколько порций каждого блюда ЗАКАЗАНО за сегодня (включая гарниры к блюдам) */
+  orderedDishes: number
+  /** отдано чеков за сегодня */
   servedOrders: number
+  /** уникальных столов с отданными чеками */
   servedTables: number
-  totalDishes: number
   vipOrders: number
   items: { menuItemId: string; name: string; qty: number }[]
 }
+
+/* ---------- стоп-лист и остатки ---------- */
+
+export interface StopControl {
+  /** блюдо в стоп-листе — тапы официанта заблокированы */
+  stopped: boolean
+  /** лимит остатка (null = без лимита); при 0 блюдо автоматически в стопе */
+  remaining: number | null
+}
+
+export type StopList = Record<string, StopControl>
 
 /* ---------- протокол socket ---------- */
 
@@ -162,6 +176,15 @@ export interface OutboxEntry extends SubmitPayload {
 export interface StatePayload {
   orders: Order[]
   analytics: Analytics
+  stopList: StopList
+}
+
+/** Изменение стоп-листа/остатка блюда (уведомление залу) */
+export interface StoplistNotification {
+  menuItemId: string
+  name: string
+  stopped: boolean
+  remaining: number | null
 }
 
 export interface OrderBrief {

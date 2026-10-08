@@ -1,0 +1,809 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { create } from 'zustand'
+     4→     4→import { toast } from 'sonner'
+     5→     5→import type {
+     6→     6→  Analytics,
+     7→     7→  ConnectionState,
+     8→     8→  KitchenMode,
+     9→     9→  MenuItem,
+    10→    10→  Order,
+    11→    11→  OrderBrief,
+    12→    12→  OutboxEntry,
+    13→    13→  Period,
+    14→    14→  Screen,
+    15→    15→  StatusFilter,
+    16→    16→  StatePayload,
+    17→    17→  StopList,
+    18→    18→  StoplistNotification,
+    19→    19→  SubmitAck,
+    20→    20→  SubmitPayload,
+    21→    21→  TableDraft,
+    22→    22→  WaiterTab,
+    23→    23→} from './types'
+    24→    24→import { defaultPeriod, findMenuItem, GARNISH_IDS, TABLES } from './menu'
+    25→    25→import { emitAck } from './socket'
+    26→    26→import { haptic, playReadyChime, playResetBlip, playSendConfirm } from './audio'
+    27→    27→import { formatClock, orderPieces, pluralDishes } from './derive'
+    28→    28→
+    29→    29→/* ============================================================
+    30→    30→   ВИТАЛИК — глобальный стор: экраны, черновики чеков (зал),
+    31→    31→   заказы и аналитика (с сервера), офлайн-очередь, уведомления.
+    32→    32→   ============================================================ */
+    33→    33→
+    34→    34→const LS = {
+    35→    35→  screen: 'vitalik_pos_screen',
+    36→    36→  drafts: 'vitalik_pos_drafts',
+    37→    37→  outbox: 'vitalik_pos_outbox',
+    38→    38→  state: 'vitalik_pos_state',
+    39→    39→  sound: 'vitalik_pos_sound',
+    40→    40→  kitchenMode: 'vitalik_pos_kitchen_mode',
+    41→    41→  table: 'vitalik_pos_table',
+    42→    42→  waiterTab: 'vitalik_pos_waiter_tab',
+    43→    43→  waiterName: 'vitalik_pos_waiter',
+    44→    44→  statusFilter: 'vitalik_pos_status_filter',
+    45→    45→}
+    46→    46→const SS = { period: 'vitalik_pos_period' }
+    47→    47→
+    48→    48→/* старые ключи прошлой версии — читаем для бесшовной миграции, пишем только новые */
+    49→    49→const LEGACY_KEYS: Record<string, string> = {
+    50→    50→  [LS.screen]: 'vk:screen',
+    51→    51→  [LS.drafts]: 'vk:drafts',
+    52→    52→  [LS.outbox]: 'vk:outbox',
+    53→    53→  [LS.state]: 'vk:state',
+    54→    54→  [LS.sound]: 'vk:sound',
+    55→    55→  [LS.kitchenMode]: 'vk:kitchen-mode',
+    56→    56→  [LS.table]: 'vk:table',
+    57→    57→  [LS.waiterTab]: 'vk:waiter-tab',
+    58→    58→  [LS.waiterName]: 'vk:waiter-name',
+    59→    59→  [LS.statusFilter]: 'vk:status-filter',
+    60→    60→}
+    61→    61→
+    62→    62→const VALID_TABLE_IDS = new Set(TABLES.map((t) => t.id))
+    63→    63→
+    64→    64→const EMPTY_ANALYTICS: Analytics = {
+    65→    65→  date: '',
+    66→    66→  orderedDishes: 0,
+    67→    67→  servedOrders: 0,
+    68→    68→  servedTables: 0,
+    69→    69→  vipOrders: 0,
+    70→    70→  items: [],
+    71→    71→}
+    72→    72→
+    73→    73→function persistJson(key: string, value: unknown) {
+    74→    74→  try {
+    75→    75→    localStorage.setItem(key, JSON.stringify(value))
+    76→    76→  } catch {
+    77→    77→    /* no-op */
+    78→    78→  }
+    79→    79→}
+    80→    80→function readJson<T>(key: string): T | undefined {
+    81→    81→  try {
+    82→    82→    const raw = localStorage.getItem(key)
+    83→    83→    if (raw) return JSON.parse(raw) as T
+    84→    84→    const legacy = LEGACY_KEYS[key]
+    85→    85→    if (legacy) {
+    86→    86→      const old = localStorage.getItem(legacy)
+    87→    87→      if (old) return JSON.parse(old) as T
+    88→    88→    }
+    89→    89→    return undefined
+    90→    90→  } catch {
+    91→    91→    return undefined
+    92→    92→  }
+    93→    93→}
+    94→    94→
+    95→    95→/** Безопасная загрузка стоп-листа из внешнего payload-а */
+    96→    96→function sanitizeStopList(raw: unknown): StopList {
+    97→    97→  const out: StopList = {}
+    98→    98→  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+    99→    99→  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+   100→   100→    if (!findMenuItem(id) || !value || typeof value !== 'object') continue
+   101→   101→    const v = value as { stopped?: unknown; remaining?: unknown }
+   102→   102→    const stopped = v.stopped === true
+   103→   103→    const remNum = Number(v.remaining)
+   104→   104→    const remaining =
+   105→   105→      v.remaining === null || v.remaining === undefined
+   106→   106→        ? null
+   107→   107→        : Number.isFinite(remNum)
+   108→   108→          ? Math.max(0, Math.min(999, Math.floor(remNum)))
+   109→   109→          : null
+   110→   110→    if (!stopped && remaining === null) continue
+   111→   111→    out[id] = { stopped, remaining }
+   112→   112→  }
+   113→   113→  return out
+   114→   114→}
+   115→   115→
+   116→   116→const FLASH_TTL = 5200
+   117→   117→
+   118→   118→interface AppStore {
+   119→   119→  /* --- boot --- */
+   120→   120→  hydrated: boolean
+   121→   121→  hydrate: () => void
+   122→   122→
+   123→   123→  /* --- навигация --- */
+   124→   124→  screen: Screen
+   125→   125→  setScreen: (s: Screen) => void
+   126→   126→
+   127→   127→  /* --- соединение и данные сервера --- */
+   128→   128→  connection: ConnectionState
+   129→   129→  setConnection: (c: ConnectionState) => void
+   130→   130→  orders: Order[]
+   131→   131→  analytics: Analytics
+   132→   132→  /** стоп-лист и остатки блюд (с сервера, мгновенно у всех) */
+   133→   133→  stopList: StopList
+   134→   134→  ingestState: (p: StatePayload) => void
+   135→   135→
+   136→   136→  /* --- уведомления (звук/тосты по роли экрана) --- */
+   137→   137→  onNewOrder: (n: OrderBrief) => void
+   138→   138→  onAccepted: (n: OrderBrief) => void
+   139→   139→  onReady: (n: OrderBrief) => void
+   140→   140→  onServed: (n: OrderBrief) => void
+   141→   141→  onReset: () => void
+   142→   142→  onStoplist: (n: StoplistNotification) => void
+   143→   143→
+   144→   144→  /* --- официант --- */
+   145→   145→  waiterName: string
+   146→   146→  setWaiterName: (n: string) => void
+   147→   147→  selectedTableId: string
+   148→   148→  setSelectedTable: (t: string) => void
+   149→   149→  period: Period
+   150→   150→  setPeriod: (p: Period) => void
+   151→   151→  waiterTab: WaiterTab
+   152→   152→  setWaiterTab: (t: WaiterTab) => void
+   153→   153→  statusFilter: StatusFilter
+   154→   154→  setStatusFilter: (f: StatusFilter) => void
+   155→   155→
+   156→   156→  drafts: Record<string, TableDraft>
+   157→   157→  addToDraft: (tableId: string, item: MenuItem, opts?: { garnishId?: string; standalone?: boolean }) => void
+   158→   158→  updateDraftQty: (tableId: string, key: string, delta: number) => void
+   159→   159→  removeDraftItem: (tableId: string, key: string) => void
+   160→   160→  setDraftComment: (tableId: string, key: string, comment: string) => void
+   161→   161→  toggleDraftQuickNote: (tableId: string, key: string, note: string) => void
+   162→   162→  setDraftVip: (tableId: string, vip: boolean) => void
+   163→   163→  setDraftTableNote: (tableId: string, note: string) => void
+   164→   164→  clearDraft: (tableId: string) => void
+   165→   165→
+   166→   166→  sending: boolean
+   167→   167→  submitDraft: (tableId: string) => Promise<boolean>
+   168→   168→
+   169→   169→  outbox: OutboxEntry[]
+   170→   170→  cancelOutboxEntry: (clientOrderId: string) => void
+   171→   171→  flushOutbox: () => Promise<void>
+   172→   172→
+   173→   173→  /* --- кухня --- */
+   174→   174→  kitchenMode: KitchenMode
+   175→   175→  setKitchenMode: (m: KitchenMode) => void
+   176→   176→  soundEnabled: boolean
+   177→   177→  setSoundEnabled: (v: boolean) => void
+   178→   178→  /** id заказов «только что пришли» → подсветка тикета, expiry в ms */
+   179→   179→  flash: Record<string, number>
+   180→   180→  acceptOrder: (orderId: string) => Promise<void>
+   181→   181→  readyOrder: (orderId: string) => Promise<void>
+   182→   182→  serveOrder: (orderId: string) => Promise<void>
+   183→   183→  toggleItem: (itemId: string) => Promise<void>
+   184→   184→  setStopDish: (menuItemId: string, stopped: boolean) => Promise<void>
+   185→   185→  setRemaining: (menuItemId: string, remaining: number | null) => Promise<void>
+   186→   186→
+   187→   187→  /* --- аналитика --- */
+   188→   188→  resetShift: (pin: string) => Promise<boolean>
+   189→   189→}
+   190→   190→
+   191→   191→function draftKeyOf(item: { menuItemId: string; garnishId?: string; standalone?: boolean }): string {
+   192→   192→  return `${item.menuItemId}::${item.garnishId ?? ''}::${item.standalone ? 1 : 0}`
+   193→   193→}
+   194→   194→
+   195→   195→function sanitizeDrafts(raw: unknown): Record<string, TableDraft> {
+   196→   196→  const out: Record<string, TableDraft> = {}
+   197→   197→  if (!raw || typeof raw !== 'object') return out
+   198→   198→  for (const [tableId, value] of Object.entries(raw as Record<string, TableDraft>)) {
+   199→   199→    if (!VALID_TABLE_IDS.has(tableId) || !value || !Array.isArray(value.items)) continue
+   200→   200→    const items = value.items
+   201→   201→      .filter((c) => c && typeof c.menuItemId === 'string' && findMenuItem(c.menuItemId))
+   202→   202→      .map((c) => {
+   203→   203→        const menuItem = findMenuItem(c.menuItemId)!
+   204→   204→        const garnishId =
+   205→   205→          typeof c.garnishId === 'string' &&
+   206→   206→          GARNISH_IDS.has(c.garnishId) &&
+   207→   207→          menuItem.category !== 'ГАРНИРЫ'
+   208→   208→            ? c.garnishId
+   209→   209→            : undefined
+   210→   210→        return {
+   211→   211→          key: draftKeyOf({ menuItemId: c.menuItemId, garnishId, standalone: c.standalone }),
+   212→   212→          menuItemId: c.menuItemId,
+   213→   213→          garnishId,
+   214→   214→          name: typeof c.name === 'string' ? c.name : (menuItem?.name ?? c.menuItemId),
+   215→   215→          qty: Math.max(1, Math.min(50, Math.floor(Number(c.qty) || 1))),
+   216→   216→          comment: typeof c.comment === 'string' ? c.comment.slice(0, 80) : undefined,
+   217→   217→          standalone: c.standalone === true,
+   218→   218→        }
+   219→   219→      })
+   220→   220→    out[tableId] = {
+   221→   221→      items,
+   222→   222→      vip: value.vip === true,
+   223→   223→      tableNote: typeof value.tableNote === 'string' ? value.tableNote.slice(0, 140) : '',
+   224→   224→    }
+   225→   225→  }
+   226→   226→  return out
+   227→   227→}
+   228→   228→
+   229→   229→function sanitizeOutbox(raw: unknown): OutboxEntry[] {
+   230→   230→  if (!Array.isArray(raw)) return []
+   231→   231→  return raw.filter(
+   232→   232→    (e): e is OutboxEntry =>
+   233→   233→      e &&
+   234→   234→      typeof e === 'object' &&
+   235→   235→      typeof e.clientOrderId === 'string' &&
+   236→   236→      VALID_TABLE_IDS.has(String(e.tableId)) &&
+   237→   237→      Array.isArray(e.items) &&
+   238→   238→      e.items.length > 0,
+   239→   239→  )
+   240→   240→}
+   241→   241→
+   242→   242→function persistOutbox(outbox: OutboxEntry[]) {
+   243→   243→  persistJson(LS.outbox, outbox)
+   244→   244→}
+   245→   245→
+   246→   246→export const useAppStore = create<AppStore>((set, get) => ({
+   247→   247→  hydrated: false,
+   248→   248→  hydrate: () => {
+   249→   249→    if (get().hydrated) return
+   250→   250→
+   251→   251→    let period: Period = defaultPeriod()
+   252→   252→    try {
+   253→   253→      const ss = sessionStorage.getItem(SS.period)
+   254→   254→      if (ss === 'breakfast' || ss === 'lunch') period = ss
+   255→   255→    } catch {
+   256→   256→      /* no-op */
+   257→   257→    }
+   258→   258→
+   259→   259→    // кэш состояния (мгновенная отрисовка офлайн, сервер переопределит)
+   260→   260→    const cached = readJson<StatePayload>(LS.state)
+   261→   261→    const storedScreenRaw = readJson<string>(LS.screen)
+   262→   262→    const storedTable = readJson<string>(LS.table)
+   263→   263→    const storedWaiterName = readJson<string>(LS.waiterName)
+   264→   264→    const storedKitchenMode = readJson<KitchenMode>(LS.kitchenMode)
+   265→   265→    const kitchenMode: KitchenMode =
+   266→   266→      storedKitchenMode === 'batch' || storedKitchenMode === 'stoplist' ? storedKitchenMode : 'tickets'
+   267→   267→
+   268→   268→    // экран: 'monitor' прошлой версии → 'analytics'
+   269→   269→    const screen: Screen =
+   270→   270→      storedScreenRaw === 'kitchen' || storedScreenRaw === 'analytics'
+   271→   271→        ? storedScreenRaw
+   272→   272→        : storedScreenRaw === 'monitor'
+   273→   273→          ? 'analytics'
+   274→   274→          : 'waiter'
+   275→   275→
+   276→   276→    set({
+   277→   277→      hydrated: true,
+   278→   278→      screen,
+   279→   279→      orders: cached?.orders ?? [],
+   280→   280→      analytics: cached?.analytics ?? EMPTY_ANALYTICS,
+   281→   281→      stopList: sanitizeStopList(cached?.stopList),
+   282→   282→      drafts: sanitizeDrafts(readJson(LS.drafts)),
+   283→   283→      outbox: sanitizeOutbox(readJson(LS.outbox)),
+   284→   284→      period,
+   285→   285→      selectedTableId:
+   286→   286→        typeof storedTable === 'string' && VALID_TABLE_IDS.has(storedTable) ? storedTable : 't1',
+   287→   287→      kitchenMode,
+   288→   288→      soundEnabled: readJson<boolean>(LS.sound) ?? true,
+   289→   289→      waiterTab: readJson<WaiterTab>(LS.waiterTab) === 'orders' ? 'orders' : 'menu',
+   290→   290→      statusFilter: readJson<StatusFilter>(LS.statusFilter) === 'all' ? 'all' : 'mine',
+   291→   291→      waiterName: typeof storedWaiterName === 'string' ? storedWaiterName.slice(0, 40) : '',
+   292→   292→    })
+   293→   293→  },
+   294→   294→
+   295→   295→  /* ---------------- навигация ---------------- */
+   296→   296→
+   297→   297→  screen: 'waiter',
+   298→   298→  setScreen: (screen) => {
+   299→   299→    persistJson(LS.screen, screen)
+   300→   300→    haptic(8)
+   301→   301→    set({ screen })
+   302→   302→  },
+   303→   303→
+   304→   304→  /* ---------------- данные сервера ---------------- */
+   305→   305→
+   306→   306→  connection: 'connecting',
+   307→   307→  setConnection: (connection) => set({ connection }),
+   308→   308→
+   309→   309→  orders: [],
+   310→   310→  analytics: EMPTY_ANALYTICS,
+   311→   311→  stopList: {},
+   312→   312→
+   313→   313→  ingestState: (p) => {
+   314→   314→    const orders = Array.isArray(p?.orders) ? p.orders : []
+   315→   315→    const analytics = p?.analytics ?? get().analytics
+   316→   316→    const stopList = sanitizeStopList(p?.stopList)
+   317→   317→    persistJson(LS.state, { orders, analytics, stopList })
+   318→   318→    set({ orders, analytics, stopList })
+   319→   319→  },
+   320→   320→
+   321→   321→  /* ---------------- уведомления ---------------- */
+   322→   322→
+   323→   323→  onNewOrder: (n) => {
+   324→   324→    const state = get()
+   325→   325→    if (state.screen === 'kitchen') {
+   326→   326→      const flash = { ...state.flash }
+   327→   327→      flash[n.orderId] = Date.now() + FLASH_TTL
+   328→   328→      set({ flash })
+   329→   329→      setTimeout(() => {
+   330→   330→        const now = Date.now()
+   331→   331→        const cur = get().flash
+   332→   332→        const next: Record<string, number> = {}
+   333→   333→        let changed = false
+   334→   334→        for (const [id, exp] of Object.entries(cur)) {
+   335→   335→          if (exp > now) next[id] = exp
+   336→   336→          else changed = true
+   337→   337→        }
+   338→   338→        if (changed) set({ flash: next })
+   339→   339→      }, FLASH_TTL + 80)
+   340→   340→
+   341→   341→      // звуковой сигнал — цикличный зуммер в экране кухни (пока не примут)
+   342→   342→      haptic(n.isVIP ? [30, 60, 30, 60, 30] : [25, 60, 25])
+   343→   343→      toast.success(
+   344→   344→        `${n.isAddendum ? 'Дозаказ' : 'Новый заказ'} · ${n.tableLabel}${n.isVIP ? ' ⭐ ВИП' : ''}`,
+   345→   345→        { description: `${n.waiterName} · ${pluralDishes(n.pieces)}` },
+   346→   346→      )
+   347→   347→    }
+   348→   348→  },
+   349→   349→
+   350→   350→  onAccepted: (n) => {
+   351→   351→    const state = get()
+   352→   352→    if (state.screen !== 'waiter') return
+   353→   353→    const mine = !state.waiterName || n.waiterName === state.waiterName
+   354→   354→    if (!mine) return
+   355→   355→    toast.info(`${n.tableLabel}: шеф принял заказ`, {
+   356→   356→      description: `Принят в ${formatClock(Date.now())} · блюда запущены в цеха`,
+   357→   357→    })
+   358→   358→  },
+   359→   359→
+   360→   360→  onReady: (n) => {
+   361→   361→    const state = get()
+   362→   362→    if (state.screen === 'waiter') {
+   363→   363→      const mine = !state.waiterName || n.waiterName === state.waiterName
+   364→   364→      if (!mine) return
+   365→   365→      if (state.soundEnabled) playReadyChime()
+   366→   366→      haptic([15, 80, 15, 80, 40])
+   367→   367→      toast.success(`🟢 ${n.tableLabel} — НА РАЗДАЧЕ!`, {
+   368→   368→        description: `Заберите блюда у окна выдачи · ${pluralDishes(n.pieces)}`,
+   369→   369→      })
+   370→   370→    } else if (state.screen === 'analytics') {
+   371→   371→      toast.success(`🟢 ${n.tableLabel} — на раздаче`, { description: `Официант: ${n.waiterName}` })
+   372→   372→    }
+   373→   373→  },
+   374→   374→
+   375→   375→  onServed: (n) => {
+   376→   376→    const state = get()
+   377→   377→    if (state.screen !== 'waiter') return
+   378→   378→    const mine = !state.waiterName || n.waiterName === state.waiterName
+   379→   379→    if (!mine) return
+   380→   380→    toast.message(`${n.tableLabel} — отдано в зал ✓`, { description: 'Заказ в архиве стола' })
+   381→   381→  },
+   382→   382→
+   383→   383→  onReset: () => {
+   384→   384→    playResetBlip()
+   385→   385→    haptic([20, 60, 20])
+   386→   386→    toast.success('Новая смена открыта', { description: 'Все чеки и счётчики очищены' })
+   387→   387→    // чистый лист и локально: черновики и офлайн-очередь — тестовые данные
+   388→   388→    try {
+   389→   389→      localStorage.removeItem(LS.drafts)
+   390→   390→      localStorage.removeItem(LS.outbox)
+   391→   391→      localStorage.removeItem(LS.state)
+   392→   392→    } catch {
+   393→   393→      /* no-op */
+   394→   394→    }
+   395→   395→    set({
+   396→   396→      drafts: {},
+   397→   397→      outbox: [],
+   398→   398→      orders: [],
+   399→   399→      stopList: {},
+   400→   400→      analytics: EMPTY_ANALYTICS,
+   401→   401→    })
+   402→   402→  },
+   403→   403→
+   404→   404→  onStoplist: (n) => {
+   405→   405→    const state = get()
+   406→   406→    if (state.screen !== 'waiter') return
+   407→   407→    if (n.stopped) {
+   408→   408→      toast.warning(`🚫 ${n.name} — стоп-лист`, { description: 'Блюдо скрыто из меню зала' })
+   409→   409→    } else if (n.remaining != null) {
+   410→   410→      toast.info(`⚠️ ${n.name}: осталось ${n.remaining} шт.`, {
+   411→   411→        description: 'Считайте порции — при нуле блюдо уйдёт в стоп',
+   412→   412→      })
+   413→   413→    } else {
+   414→   414→      toast.success(`✅ ${n.name} снова доступен`, { description: 'Без лимита остатка' })
+   415→   415→    }
+   416→   416→  },
+   417→   417→
+   418→   418→  /* ---------------- ОФИЦИАНТ ---------------- */
+   419→   419→
+   420→   420→  waiterName: '',
+   421→   421→  setWaiterName: (waiterName) => {
+   422→   422→    persistJson(LS.waiterName, waiterName)
+   423→   423→    set({ waiterName })
+   424→   424→  },
+   425→   425→
+   426→   426→  selectedTableId: 't1',
+   427→   427→  setSelectedTable: (selectedTableId) => {
+   428→   428→    persistJson(LS.table, selectedTableId)
+   429→   429→    haptic(6)
+   430→   430→    set({ selectedTableId })
+   431→   431→  },
+   432→   432→
+   433→   433→  period: 'lunch',
+   434→   434→  setPeriod: (period) => {
+   435→   435→    try {
+   436→   436→      sessionStorage.setItem(SS.period, period)
+   437→   437→    } catch {
+   438→   438→      /* no-op */
+   439→   439→    }
+   440→   440→    set({ period })
+   441→   441→  },
+   442→   442→
+   443→   443→  waiterTab: 'menu',
+   444→   444→  setWaiterTab: (waiterTab) => {
+   445→   445→    persistJson(LS.waiterTab, waiterTab)
+   446→   446→    set({ waiterTab })
+   447→   447→  },
+   448→   448→
+   449→   449→  statusFilter: 'mine',
+   450→   450→  setStatusFilter: (statusFilter) => {
+   451→   451→    persistJson(LS.statusFilter, statusFilter)
+   452→   452→    set({ statusFilter })
+   453→   453→  },
+   454→   454→
+   455→   455→  drafts: {},
+   456→   456→
+   457→   457→  addToDraft: (tableId, item, opts) => {
+   458→   458→    const garnishId =
+   459→   459→      opts?.garnishId && GARNISH_IDS.has(opts.garnishId) && item.category !== 'ГАРНИРЫ'
+   460→   460→        ? opts.garnishId
+   461→   461→        : undefined
+   462→   462→    const standalone = opts?.standalone === true
+   463→   463→    const key = draftKeyOf({ menuItemId: item.id, garnishId, standalone })
+   464→   464→    const drafts = { ...get().drafts }
+   465→   465→    const draft = drafts[tableId] ?? { items: [], vip: false, tableNote: '' }
+   466→   466→    const list = [...draft.items]
+   467→   467→    const existing = list.find((c) => c.key === key)
+   468→   468→    if (existing) existing.qty = Math.min(50, existing.qty + 1)
+   469→   469→    else
+   470→   470→      list.push({
+   471→   471→        key,
+   472→   472→        menuItemId: item.id,
+   473→   473→        garnishId,
+   474→   474→        name: item.name,
+   475→   475→        qty: 1,
+   476→   476→        standalone,
+   477→   477→      })
+   478→   478→    drafts[tableId] = { ...draft, items: list }
+   479→   479→    persistJson(LS.drafts, drafts)
+   480→   480→    haptic(8)
+   481→   481→    set({ drafts })
+   482→   482→  },
+   483→   483→
+   484→   484→  updateDraftQty: (tableId, key, delta) => {
+   485→   485→    const drafts = { ...get().drafts }
+   486→   486→    const draft = drafts[tableId]
+   487→   487→    if (!draft) return
+   488→   488→    let list = draft.items.map((c) => (c.key === key ? { ...c, qty: c.qty + delta } : c))
+   489→   489→    list = list.filter((c) => c.qty > 0)
+   490→   490→    if (list.length) drafts[tableId] = { ...draft, items: list }
+   491→   491→    else delete drafts[tableId]
+   492→   492→    persistJson(LS.drafts, drafts)
+   493→   493→    haptic(6)
+   494→   494→    set({ drafts })
+   495→   495→  },
+   496→   496→
+   497→   497→  removeDraftItem: (tableId, key) => {
+   498→   498→    const drafts = { ...get().drafts }
+   499→   499→    const draft = drafts[tableId]
+   500→   500→    if (!draft) return
+   501→   501→    const list = draft.items.filter((c) => c.key !== key)
+   502→   502→    if (list.length) drafts[tableId] = { ...draft, items: list }
+   503→   503→    else delete drafts[tableId]
+   504→   504→    persistJson(LS.drafts, drafts)
+   505→   505→    haptic(6)
+   506→   506→    set({ drafts })
+   507→   507→  },
+   508→   508→
+   509→   509→  setDraftComment: (tableId, key, comment) => {
+   510→   510→    const drafts = { ...get().drafts }
+   511→   511→    const draft = drafts[tableId]
+   512→   512→    if (!draft) return
+   513→   513→    const trimmed = comment.trim().slice(0, 80)
+   514→   514→    drafts[tableId] = {
+   515→   515→      ...draft,
+   516→   516→      items: draft.items.map((c) => (c.key === key ? { ...c, comment: trimmed || undefined } : c)),
+   517→   517→    }
+   518→   518→    persistJson(LS.drafts, drafts)
+   519→   519→    set({ drafts })
+   520→   520→  },
+   521→   521→
+   522→   522→  toggleDraftQuickNote: (tableId, key, note) => {
+   523→   523→    const drafts = { ...get().drafts }
+   524→   524→    const draft = drafts[tableId]
+   525→   525→    if (!draft) return
+   526→   526→    drafts[tableId] = {
+   527→   527→      ...draft,
+   528→   528→      items: draft.items.map((c) => {
+   529→   529→        if (c.key !== key) return c
+   530→   530→        const parts = (c.comment ?? '')
+   531→   531→          .split(', ')
+   532→   532→          .map((s) => s.trim())
+   533→   533→          .filter(Boolean)
+   534→   534→        const idx = parts.indexOf(note)
+   535→   535→        if (idx >= 0) parts.splice(idx, 1)
+   536→   536→        else parts.push(note)
+   537→   537→        const merged = parts.join(', ')
+   538→   538→        return { ...c, comment: merged || undefined }
+   539→   539→      }),
+   540→   540→    }
+   541→   541→    persistJson(LS.drafts, drafts)
+   542→   542→    haptic(6)
+   543→   543→    set({ drafts })
+   544→   544→  },
+   545→   545→
+   546→   546→  setDraftVip: (tableId, vip) => {
+   547→   547→    const drafts = { ...get().drafts }
+   548→   548→    const draft = drafts[tableId] ?? { items: [], vip: false, tableNote: '' }
+   549→   549→    drafts[tableId] = { ...draft, vip }
+   550→   550→    persistJson(LS.drafts, drafts)
+   551→   551→    haptic(10)
+   552→   552→    set({ drafts })
+   553→   553→  },
+   554→   554→
+   555→   555→  setDraftTableNote: (tableId, tableNote) => {
+   556→   556→    const drafts = { ...get().drafts }
+   557→   557→    const draft = drafts[tableId] ?? { items: [], vip: false, tableNote: '' }
+   558→   558→    drafts[tableId] = { ...draft, tableNote: tableNote.trim().slice(0, 140) }
+   559→   559→    persistJson(LS.drafts, drafts)
+   560→   560→    set({ drafts })
+   561→   561→  },
+   562→   562→
+   563→   563→  clearDraft: (tableId) => {
+   564→   564→    const drafts = { ...get().drafts }
+   565→   565→    delete drafts[tableId]
+   566→   566→    persistJson(LS.drafts, drafts)
+   567→   567→    set({ drafts })
+   568→   568→  },
+   569→   569→
+   570→   570→  sending: false,
+   571→   571→
+   572→   572→  submitDraft: async (tableId) => {
+   573→   573→    const state = get()
+   574→   574→    const draft = state.drafts[tableId]
+   575→   575→    if (!draft || draft.items.length === 0 || state.sending) return false
+   576→   576→    if (!state.waiterName.trim()) {
+   577→   577→      toast.error('Выберите имя официанта', { description: 'Кухня должна знать, чей заказ' })
+   578→   578→      return false
+   579→   579→    }
+   580→   580→
+   581→   581→    // стоп-лист и остатки: сверка ДО отправки (суммарно по блюду + привязанным гарнирам)
+   582→   582→    const needed = new Map<string, number>()
+   583→   583→    for (const c of draft.items) {
+   584→   584→      needed.set(c.menuItemId, (needed.get(c.menuItemId) ?? 0) + c.qty)
+   585→   585→      if (c.garnishId) needed.set(c.garnishId, (needed.get(c.garnishId) ?? 0) + c.qty)
+   586→   586→    }
+   587→   587→    const violations: string[] = []
+   588→   588→    for (const [id, qty] of needed) {
+   589→   589→      const control = state.stopList[id]
+   590→   590→      const name = findMenuItem(id)?.name ?? id
+   591→   591→      if (control?.stopped) {
+   592→   592→        violations.push(`«${name}» — в стоп-листе`)
+   593→   593→      } else if (control?.remaining != null && qty > control.remaining) {
+   594→   594→        violations.push(`«${name}» — осталось ${control.remaining}, в чеке ${qty}`)
+   595→   595→      }
+   596→   596→    }
+   597→   597→    if (violations.length) {
+   598→   598→      haptic([25, 60, 25])
+   599→   599→      toast.error('Заказ не отправлен — стоп-лист', {
+   600→   600→        description: violations.slice(0, 3).join(' · '),
+   601→   601→      })
+   602→   602→      return false
+   603→   603→    }
+   604→   604→
+   605→   605→    const pieces = draft.items.reduce((acc, c) => acc + c.qty, 0)
+   606→   606→    const isAddendum = state.orders.some((o) => o.tableId === tableId && o.status !== 'served')
+   607→   607→    const tableLabel =
+   608→   608→      state.orders.find((o) => o.tableId === tableId)?.tableLabel ?? tableLabelOfSafe(tableId)
+   609→   609→
+   610→   610→    const payload: SubmitPayload = {
+   611→   611→      clientOrderId: crypto.randomUUID(),
+   612→   612→      tableId,
+   613→   613→      waiterName: state.waiterName.trim(),
+   614→   614→      isVIP: draft.vip,
+   615→   615→      tableNote: draft.tableNote || undefined,
+   616→   616→      period: state.period,
+   617→   617→      items: draft.items.map(({ menuItemId, garnishId, qty, comment, standalone }) => ({
+   618→   618→        menuItemId,
+   619→   619→        garnishId,
+   620→   620→        qty,
+   621→   621→        comment,
+   622→   622→        standalone,
+   623→   623→      })),
+   624→   624→    }
+   625→   625→
+   626→   626→    const queueOffline = () => {
+   627→   627→      const outbox = [...get().outbox, { ...payload, queuedAt: Date.now(), tableLabel, pieces }]
+   628→   628→      persistOutbox(outbox)
+   629→   629→      set({ outbox, waiterTab: 'orders' })
+   630→   630→      get().clearDraft(tableId)
+   631→   631→      toast.warning('Нет связи с кухней', {
+   632→   632→        description: 'Заказ сохранён в телефоне и уйдёт автоматически при подключении',
+   633→   633→      })
+   634→   634→    }
+   635→   635→
+   636→   636→    set({ sending: true })
+   637→   637→    try {
+   638→   638→      if (state.connection !== 'online') {
+   639→   639→        queueOffline()
+   640→   640→        return true
+   641→   641→      }
+   642→   642→      const res = await emitAck<SubmitAck>('vk:order:submit', payload)
+   643→   643→      if (res?.ok) {
+   644→   644→        get().clearDraft(tableId)
+   645→   645→        playSendConfirm()
+   646→   646→        haptic([14, 50, 24])
+   647→   647→        toast.success(
+   648→   648→          isAddendum ? 'Дозаказ отправлен на кухню' : 'Заказ отправлен! 🟡 Ждёт подтверждения шефа',
+   649→   649→          { description: `${tableLabel} · ${pluralDishes(pieces)}${draft.vip ? ' · ⚡ ВИП' : ''}` },
+   650→   650→        )
+   651→   651→        set({ waiterTab: 'orders' })
+   652→   652→        return true
+   653→   653→      }
+   654→   654→      toast.error('Кухня не приняла заказ', { description: res?.error ?? 'Попробуйте ещё раз' })
+   655→   655→      return false
+   656→   656→    } catch {
+   657→   657→      queueOffline()
+   658→   658→      return true
+   659→   659→    } finally {
+   660→   660→      set({ sending: false })
+   661→   661→    }
+   662→   662→  },
+   663→   663→
+   664→   664→  outbox: [],
+   665→   665→
+   666→   666→  cancelOutboxEntry: (clientOrderId) => {
+   667→   667→    const outbox = get().outbox.filter((e) => e.clientOrderId !== clientOrderId)
+   668→   668→    persistOutbox(outbox)
+   669→   669→    set({ outbox })
+   670→   670→  },
+   671→   671→
+   672→   672→  flushOutbox: async () => {
+   673→   673→    const state = get()
+   674→   674→    if (!state.outbox.length) return
+   675→   675→    const remaining = [...state.outbox]
+   676→   676→    for (const entry of remaining) {
+   677→   677→      try {
+   678→   678→        const res = await emitAck<SubmitAck>('vk:order:submit', entry)
+   679→   679→        if (res?.ok) {
+   680→   680→          const outbox = get().outbox.filter((e) => e.clientOrderId !== entry.clientOrderId)
+   681→   681→          persistOutbox(outbox)
+   682→   682→          set({ outbox })
+   683→   683→          toast.success(`Заказ доставлен на кухню · ${entry.tableLabel}`, {
+   684→   684→            description: 'Связь восстановлена — заказ ушёл из офлайн-очереди',
+   685→   685→          })
+   686→   686→        } else {
+   687→   687→          // сервер отказал (некорректные данные) — убираем, чтобы не крутился вечно
+   688→   688→          const outbox = get().outbox.filter((e) => e.clientOrderId !== entry.clientOrderId)
+   689→   689→          persistOutbox(outbox)
+   690→   690→          set({ outbox })
+   691→   691→          toast.error(`Заказ отклонён · ${entry.tableLabel}`, { description: res?.error })
+   692→   692→        }
+   693→   693→      } catch {
+   694→   694→        break // связь снова пропала — попробуем при следующем подключении
+   695→   695→      }
+   696→   696→    }
+   697→   697→  },
+   698→   698→
+   699→   699→  /* ---------------- КУХНЯ ---------------- */
+   700→   700→
+   701→   701→  kitchenMode: 'tickets',
+   702→   702→  setKitchenMode: (kitchenMode) => {
+   703→   703→    persistJson(LS.kitchenMode, kitchenMode)
+   704→   704→    set({ kitchenMode })
+   705→   705→  },
+   706→   706→
+   707→   707→  soundEnabled: true,
+   708→   708→  setSoundEnabled: (soundEnabled) => {
+   709→   709→    persistJson(LS.sound, soundEnabled)
+   710→   710→    set({ soundEnabled })
+   711→   711→  },
+   712→   712→
+   713→   713→  flash: {},
+   714→   714→
+   715→   715→  acceptOrder: async (orderId) => {
+   716→   716→    try {
+   717→   717→      const res = await emitAck('vk:order:accept', { orderId })
+   718→   718→      if (!res?.ok) toast.error('Не удалось принять заказ', { description: res?.error })
+   719→   719→    } catch {
+   720→   720→      toast.error('Нет связи с сервером')
+   721→   721→    }
+   722→   722→  },
+   723→   723→
+   724→   724→  readyOrder: async (orderId) => {
+   725→   725→    try {
+   726→   726→      const res = await emitAck('vk:order:ready', { orderId })
+   727→   727→      if (!res?.ok) toast.error('Не удалось отметить готовность', { description: res?.error })
+   728→   728→    } catch {
+   729→   729→      toast.error('Нет связи с сервером')
+   730→   730→    }
+   731→   731→  },
+   732→   732→
+   733→   733→  serveOrder: async (orderId) => {
+   734→   734→    try {
+   735→   735→      const res = await emitAck('vk:order:serve', { orderId })
+   736→   736→      if (!res?.ok) toast.error('Не удалось отдать заказ', { description: res?.error })
+   737→   737→    } catch {
+   738→   738→      toast.error('Нет связи с сервером')
+   739→   739→    }
+   740→   740→  },
+   741→   741→
+   742→   742→  toggleItem: async (itemId) => {
+   743→   743→    try {
+   744→   744→      const res = await emitAck<{ ok: boolean; error?: string }>('vk:item:toggle', { itemId })
+   745→   745→      if (!res?.ok && res?.error) toast.error(res.error)
+   746→   746→    } catch {
+   747→   747→      toast.error('Нет связи с сервером')
+   748→   748→    }
+   749→   749→  },
+   750→   750→
+   751→   751→  setStopDish: async (menuItemId, stopped) => {
+   752→   752→    haptic(10)
+   753→   753→    try {
+   754→   754→      const res = await emitAck<{ ok: boolean; error?: string }>('vk:stop:set', { menuItemId, stopped })
+   755→   755→      if (!res?.ok) toast.error('Не удалось изменить стоп-лист', { description: res?.error })
+   756→   756→    } catch {
+   757→   757→      toast.error('Нет связи с сервером')
+   758→   758→    }
+   759→   759→  },
+   760→   760→
+   761→   761→  setRemaining: async (menuItemId, remaining) => {
+   762→   762→    haptic(10)
+   763→   763→    try {
+   764→   764→      const res = await emitAck<{ ok: boolean; error?: string }>('vk:stop:remaining', {
+   765→   765→        menuItemId,
+   766→   766→        remaining,
+   767→   767→      })
+   768→   768→      if (!res?.ok) toast.error('Не удалось задать остаток', { description: res?.error })
+   769→   769→    } catch {
+   770→   770→      toast.error('Нет связи с сервером')
+   771→   771→    }
+   772→   772→  },
+   773→   773→
+   774→   774→  /* ---------------- АНАЛИТИКА ---------------- */
+   775→   775→
+   776→   776→  resetShift: async (pin) => {
+   777→   777→    try {
+   778→   778→      const res = await emitAck<{ ok: boolean; error?: string }>('vk:shift:reset', { pin })
+   779→   779→      if (res?.ok) {
+   780→   780→        haptic([20, 60, 20])
+   781→   781→        return true
+   782→   782→      }
+   783→   783→      return false
+   784→   784→    } catch {
+   785→   785→      toast.error('Нет связи с сервером')
+   786→   786→      return false
+   787→   787→    }
+   788→   788→  },
+   789→   789→}))
+   790→   790→
+   791→   791→/* локальный безопасный лейбл стола (без циклического импорта меню в рантайме) */
+   792→   792→function tableLabelOfSafe(tableId: string): string {
+   793→   793→  const m = /^t(\d+)$/.exec(tableId)
+   794→   794→  if (m) return `Стол ${m[1]}`
+   795→   795→  if (tableId === 'banquet1') return 'Банкет 1'
+   796→   796→  if (tableId === 'banquet2') return 'Банкет 2'
+   797→   797→  return tableId
+   798→   798→}
+   799→   799→
+   800→   800→/* селектор: активный заказ выбранного стола (для режима дозаказа) */
+   801→   801→export function selectActiveOrder(state: { orders: Order[] }, tableId: string): Order | undefined {
+   802→   802→  return state.orders.find((o) => o.tableId === tableId && o.status !== 'served')
+   803→   803→}
+   804→   804→
+   805→   805→export function selectPieces(state: { orders: Order[] }, orderId: string): number {
+   806→   806→  const o = state.orders.find((x) => x.id === orderId)
+   807→   807→  return o ? orderPieces(o) : 0
+   808→   808→}
+   809→   809→
