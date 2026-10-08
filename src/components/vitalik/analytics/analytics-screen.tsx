@@ -1,347 +1,232 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { BarChart3, Crown, FileClock, History, PieChart, ReceiptText, RotateCcw, Trash2 } from 'lucide-react'
-import { useAppStore } from '@/lib/store'
-import { findMenuItem } from '@/lib/menu'
-import { formatClock, orderPieces, pluralDishes, servedToday } from '@/lib/derive'
-import type { Order } from '@/lib/types'
-import { cn } from '@/lib/utils'
-import { ConnectionBadge } from '../connection-badge'
-import { useNow } from '../use-now'
+import { useState } from 'react'
+import { toast } from 'sonner'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp'
+import { useVitalik } from '@/lib/api-client'
+import { haptic, playResetBlip } from '@/lib/audio'
+import { formatClock } from '@/lib/derive'
+import { MENU } from '@/lib/menu'
+import { cn } from '@/lib/utils'
 
 /* ============================================================
-   ЭКРАН 3 — «АНАЛИТИКА И ИСТОРИЯ» (открыт всем, без паролей):
-   1) счётчик блюд за день по категориям
-   2) журнал истории чеков
-   3) сброс тестовых данных (пин 0000)
+   Экран 3 — АНАЛИТИКА И ИСТОРИЯ (открыт всем):
+   ① точный счётчик приготовленных порций по каждому блюду;
+   ② журнал закрытых чеков со временем и официантами;
+   ③ [🗑 Сбросить тестовые данные] — защита PIN-кодом 0000.
    ============================================================ */
 
-const CATEGORY_ORDER: { key: string; title: string; hint?: string }[] = [
-  { key: 'Завтраки', title: 'ЗАВТРАК' },
-  { key: 'САЛАТЫ', title: 'САЛАТЫ' },
-  { key: 'ГОРЯЧИЕ ЗАКУСКИ', title: 'ГОРЯЧИЕ ЗАКУСКИ' },
-  { key: 'ГОРЯЧИЕ БЛЮДА', title: 'ГОРЯЧИЕ БЛЮДА' },
-  { key: 'ГАРНИРЫ', title: 'ГАРНИРЫ', hint: 'включая гарниры к блюдам' },
-  { key: 'ДЕСЕРТЫ', title: 'ДЕСЕРТЫ' },
-]
-
-function formatDateRu(date: string): string {
-  if (!date) return ''
-  const [y, m, d] = date.split('-')
-  if (!y || !m || !d) return date
-  return `${d}.${m}.${y}`
-}
-
-function SummaryCard({ icon: Icon, value, label, accent }: {
-  icon: typeof BarChart3
-  value: number
-  label: string
-  accent: 'gold' | 'emerald' | 'amber' | 'coral'
-}) {
-  const accents: Record<'gold' | 'emerald' | 'amber' | 'coral', string> = {
-    gold: 'text-[#D4AF37] bg-[#D4AF37]/10',
-    emerald: 'text-emerald-400 bg-emerald-500/10',
-    amber: 'text-amber-400 bg-amber-500/10',
-    coral: 'text-red-400 bg-red-500/10',
-  }
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-[#262B35] bg-[#161922] p-3">
-      <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl', accents[accent])}>
-        <Icon className="h-5 w-5" />
-      </span>
-      <div className="min-w-0 flex-1 leading-tight">
-        <div className="text-xl font-black tabular-nums text-[#F5F1E8]">{value}</div>
-        <div className="text-[9.5px] font-bold uppercase leading-[1.25] tracking-wide text-zinc-500">{label}</div>
-      </div>
-    </div>
-  )
-}
-
-/* ---------- журнал истории ---------- */
-
-function HistoryCard({ order, now }: { order: Order; now: number }) {
-  const servedAt = order.servedAt ?? order.readyAt ?? order.sentAt
-  const minutesAgo = Math.max(0, Math.floor((now - servedAt) / 60000))
-  const agoText = minutesAgo < 1 ? 'только что' : `${minutesAgo} мин назад`
-  return (
-    <article
-      className={cn(
-        'rounded-2xl border p-4',
-        order.isVIP ? 'vip-frame' : 'border-[#262B35] bg-[#161922]',
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-base font-black text-[#F5F1E8]">{order.tableLabel}</span>
-        {order.isVIP && <span className="vip-chip">⭐ ВИП</span>}
-        <span className="rounded-full bg-[#232936] px-2.5 py-1 text-[10px] font-bold text-zinc-300">
-          {order.waiterName}
-        </span>
-        <span className="ml-auto flex items-center gap-1 text-xs font-bold tabular-nums text-emerald-400">
-          <FileClock className="h-3.5 w-3.5" />
-          {formatClock(servedAt)}
-        </span>
-      </div>
-      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-        отдано {agoText} · {pluralDishes(orderPieces(order))}
-      </div>
-      <ul className="mt-3 space-y-1.5">
-        {order.items.map((item) => (
-          <li key={item.id} className="text-[13px] leading-snug">
-            <span className="font-black text-emerald-300">{item.qty}×</span>{' '}
-            <span className="text-[#F5F1E8]">{item.name}</span>
-            {item.garnishName && (
-              <span className="ml-1 text-[11px] text-zinc-500">+ {item.garnishName}</span>
-            )}
-            {item.comment && <span className="ml-1 text-[11px] italic text-amber-400/80">«{item.comment}»</span>}
-          </li>
-        ))}
-      </ul>
-    </article>
-  )
-}
-
-/* ---------- сброс смены ---------- */
-
-function ResetSection() {
-  const [open, setOpen] = useState(false)
-  const [pin, setPin] = useState('')
-  const [error, setError] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const resetShift = useAppStore((s) => s.resetShift)
-
-  const submit = async () => {
-    if (pin.length < 4 || busy) return
-    setBusy(true)
-    const ok = await resetShift(pin)
-    setBusy(false)
-    if (ok) {
-      setOpen(false)
-      setPin('')
-      setError(false)
-    } else {
-      setError(true)
-      setTimeout(() => setError(false), 600)
-    }
-  }
-
-  return (
-    <section aria-labelledby="analytics-reset" className="mt-6">
-      <h2 id="analytics-reset" className="sr-only">
-        Сброс тестовых данных
-      </h2>
-      <button
-        type="button"
-        onClick={() => {
-          setOpen(true)
-          setPin('')
-          setError(false)
-        }}
-        className="flex h-[56px] w-full items-center justify-center gap-2 rounded-2xl border border-red-500/40 bg-red-500/10 text-[15px] font-black uppercase tracking-wide text-red-400 transition-transform active:scale-[0.98]"
-      >
-        <Trash2 className="h-5 w-5" />
-        Сбросить тестовые данные и начать смену
-      </button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-[340px] rounded-3xl border-[#262B35] bg-[#161922] p-6">
-          <DialogHeader>
-            <DialogTitle className="text-center text-lg font-black text-[#F5F1E8]">
-              Защита пин-кодом
-            </DialogTitle>
-            <DialogDescription className="text-center text-xs text-zinc-500">
-              Введите пин-код администратора для сброса заказов, счётчиков и истории
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className={cn('flex flex-col items-center gap-3 py-2', error && 'animate-shake')}>
-            <InputOTP
-              maxLength={4}
-              value={pin}
-              onChange={setPin}
-              inputMode="numeric"
-              onComplete={() => void submit()}
-              aria-label="Пин-код"
-            >
-              <InputOTPGroup>
-                <InputOTPSlot index={0} className="h-12 w-12 border-[#262B35] text-lg font-black text-[#F5F1E8]" />
-                <InputOTPSlot index={1} className="h-12 w-12 border-[#262B35] text-lg font-black text-[#F5F1E8]" />
-                <InputOTPSlot index={2} className="h-12 w-12 border-[#262B35] text-lg font-black text-[#F5F1E8]" />
-                <InputOTPSlot index={3} className="h-12 w-12 border-[#262B35] text-lg font-black text-[#F5F1E8]" />
-              </InputOTPGroup>
-            </InputOTP>
-            {error && (
-              <p className="text-center text-xs font-bold text-red-400">Неверный пин-код. Попробуйте ещё раз</p>
-            )}
-          </div>
-
-          <DialogFooter className="flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={pin.length < 4 || busy}
-              className="h-[52px] w-full rounded-2xl bg-red-500 text-[15px] font-black uppercase tracking-wide text-white transition-transform active:scale-[0.98] disabled:opacity-40"
-            >
-              Подтвердить сброс
-            </button>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="h-[52px] w-full rounded-2xl border border-[#262B35] bg-[#232936] text-sm font-bold text-zinc-300 transition-transform active:scale-[0.98]"
-            >
-              Отмена
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </section>
-  )
-}
-
-/* ---------- главный экран ---------- */
-
 export function AnalyticsScreen() {
-  const analytics = useAppStore((s) => s.analytics)
-  const orders = useAppStore((s) => s.orders)
-  const connection = useAppStore((s) => s.connection)
-  const now = useNow(15000)
+  const { state, synced, mutate } = useVitalik()
+  const [pinOpen, setPinOpen] = useState(false)
+  const [pin, setPin] = useState('')
+  const [shake, setShake] = useState(false)
+  const [resetting, setResetting] = useState(false)
 
-  const history = useMemo(
-    () => servedToday(orders).sort((a, b) => (b.servedAt ?? 0) - (a.servedAt ?? 0)),
-    [orders],
-  )
+  const counters = state?.counters ?? {}
+  const history = state?.history ?? []
+  const totalPortions = Object.values(counters).reduce((a, b) => a + b, 0)
 
-  // группировка счётчиков по категориям меню
-  const grouped = useMemo(() => {
-    const buckets = new Map<string, { name: string; qty: number }[]>()
-    for (const cat of CATEGORY_ORDER) buckets.set(cat.key, [])
-    for (const item of analytics.items) {
-      const category = findMenuItem(item.menuItemId)?.category
-      const list = category ? buckets.get(category) : undefined
-      if (list) list.push({ name: item.name, qty: item.qty })
+  const categories = new Map<string, typeof MENU>()
+  for (const dish of MENU) {
+    const list = categories.get(dish.category) ?? []
+    list.push(dish)
+    categories.set(dish.category, list)
+  }
+
+  const doReset = async () => {
+    if (pin !== '0000') {
+      setShake(true)
+      haptic([30, 50, 30])
+      setTimeout(() => setShake(false), 450)
+      return
     }
-    for (const [, list] of buckets) list.sort((a, b) => b.qty - a.qty)
-    return CATEGORY_ORDER.map((cat) => ({ ...cat, items: buckets.get(cat.key) ?? [] })).filter(
-      (g) => g.items.length > 0,
-    )
-  }, [analytics.items])
-
-  const hasCounters = analytics.orderedDishes > 0
+    setResetting(true)
+    haptic([20, 60, 20])
+    const res = await mutate('/api/reset', { pin })
+    setResetting(false)
+    if (res) {
+      playResetBlip()
+      toast.success('Смена начата — все данные сброшены 🧹')
+      setPinOpen(false)
+      setPin('')
+    }
+  }
 
   return (
-    <main className="pb-2">
-      {/* шапка */}
-      <header className="flex items-center gap-3 rounded-3xl border border-[#262B35] bg-[#161922] p-4">
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#D4AF37]/15">
-          <BarChart3 className="h-6 w-6 text-[#D4AF37]" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-black leading-tight text-[#F5F1E8]">Аналитика и История</h1>
-          <p className="text-[11px] font-semibold text-zinc-500">
-            Смена: {formatDateRu(analytics.date) || 'сегодня'}
-          </p>
+    <div className="flex flex-col gap-4">
+      {/* Шапка */}
+      <header className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#D4AF37]/15 text-lg" aria-hidden>
+            📊
+          </span>
+          <div className="leading-none">
+            <div className="font-logo text-[20px] font-black tracking-tight text-[#D4AF37]">
+              ВИТАЛИК · АНАЛИТИКА
+            </div>
+            <div className="mt-1 text-[11px] font-bold text-zinc-500">
+              Счётчики за смену · {history.length} закрытых чеков
+            </div>
+          </div>
         </div>
-        <ConnectionBadge connection={connection} />
+        <span
+          className={cn(
+            'h-2 w-2 rounded-full',
+            synced ? 'bg-emerald-500/70' : 'animate-pulse bg-amber-500/80',
+          )}
+          title={synced ? 'Синхронизировано' : 'Возобновляем связь…'}
+          aria-hidden
+        />
       </header>
 
-      {/* сводка дня */}
-      <section aria-label="Сводка дня" className="mt-4 grid grid-cols-2 gap-2.5">
-        <SummaryCard icon={PieChart} value={analytics.orderedDishes} label="Блюд заказано" accent="emerald" />
-        <SummaryCard icon={ReceiptText} value={analytics.servedOrders} label="Чеков отдано" accent="amber" />
-        <SummaryCard icon={BarChart3} value={analytics.servedTables} label="Столов обслужено" accent="gold" />
-        <SummaryCard icon={Crown} value={analytics.vipOrders} label="ВИП-чеков" accent="coral" />
-      </section>
-
-      {/* раздел 1: счётчик по блюдам */}
-      <section aria-labelledby="analytics-dishes" className="mt-6">
-        <h2 id="analytics-dishes" className="flex items-center gap-2 text-[13px] font-black uppercase tracking-wide text-[#D4AF37]">
-          <PieChart className="h-4 w-4" />
-          Счётчик по блюдам за день
-        </h2>
-
-        {!hasCounters && (
-          <div className="mt-3 rounded-2xl border border-dashed border-[#262B35] bg-[#161922]/60 p-6 text-center">
-            <ReceiptText className="mx-auto h-8 w-8 text-zinc-600" />
-            <p className="mt-2 text-sm font-bold text-zinc-400">Пока ничего не заказано</p>
-            <p className="text-xs text-zinc-600">Счётчики появятся после первых заказов</p>
+      {/* Итоги */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-2xl border border-[#262B35] bg-[#161922] p-4 text-center">
+          <div className="text-[28px] font-black tabular-nums text-[#D4AF37]">{totalPortions}</div>
+          <div className="mt-1 text-[11px] font-black uppercase tracking-wider text-zinc-500">
+            порций приготовлено
           </div>
-        )}
+        </div>
+        <div className="rounded-2xl border border-[#262B35] bg-[#161922] p-4 text-center">
+          <div className="text-[28px] font-black tabular-nums text-emerald-300">{history.length}</div>
+          <div className="mt-1 text-[11px] font-black uppercase tracking-wider text-zinc-500">
+            чеков закрыто
+          </div>
+        </div>
+      </div>
 
-        <div className="mt-3 space-y-4">
-          {grouped.map((group) => (
-            <div key={group.key} className="rounded-2xl border border-[#262B35] bg-[#161922] p-4">
-              <div className="flex items-baseline justify-between gap-2">
-                <h3 className="text-xs font-black uppercase tracking-widest text-zinc-400">{group.title}</h3>
-                {group.hint && (
-                  <span className="text-right text-[10px] font-semibold italic text-zinc-600">({group.hint})</span>
-                )}
+      {/* ① Счётчик по каждому блюду */}
+      <section aria-label="Приготовлено за сегодня">
+        <h2 className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-zinc-500">
+          Приготовлено за сегодня
+        </h2>
+        <div className="flex flex-col gap-3">
+          {[...categories.entries()].map(([category, dishes]) => {
+            const catTotal = dishes.reduce((acc, d) => acc + (counters[d.id] ?? 0), 0)
+            return (
+              <div key={category} className="rounded-2xl border border-[#262B35] bg-[#161922] p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[12px] font-black uppercase tracking-wider text-zinc-400">
+                    {category}
+                  </span>
+                  <span className="text-[12px] font-black tabular-nums text-[#D4AF37]">{catTotal}</span>
+                </div>
+                <div className="flex flex-col divide-y divide-[#262B35]/60">
+                  {dishes.map((dish) => {
+                    const count = counters[dish.id] ?? 0
+                    return (
+                      <div key={dish.id} className="flex items-center justify-between gap-3 py-2">
+                        <span className={cn('min-w-0 truncate text-[13.5px] font-bold', count > 0 ? 'text-[#F5F1E8]' : 'text-zinc-600')}>
+                          {dish.name}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-lg px-2.5 py-1 text-[14px] font-black tabular-nums',
+                            count > 0 ? 'bg-[#D4AF37]/15 text-[#F5E29A]' : 'bg-[#0D0F12] text-zinc-600',
+                          )}
+                        >
+                          {count}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              <ul className="mt-3 space-y-2.5">
-                {group.items.map((item) => (
-                  <li key={item.name} className="flex items-center justify-between gap-3">
-                    <span className="min-w-0 text-[13.5px] font-semibold leading-snug text-[#F5F1E8]">
-                      {item.name}
-                    </span>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-xl px-2.5 py-1 text-sm font-black tabular-nums',
-                        group.key === 'ГАРНИРЫ'
-                          ? 'bg-amber-500/15 text-amber-300'
-                          : 'bg-emerald-500/15 text-emerald-300',
-                      )}
-                    >
-                      {item.qty} шт.
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
 
-      {/* раздел 2: журнал истории чеков */}
-      <section aria-labelledby="analytics-history" className="mt-6">
-        <h2 id="analytics-history" className="flex items-center gap-2 text-[13px] font-black uppercase tracking-wide text-[#D4AF37]">
-          <History className="h-4 w-4" />
-          Журнал истории чеков
-          {history.length > 0 && (
-            <span className="rounded-full bg-[#232936] px-2 py-0.5 text-[10px] font-bold text-zinc-400">
-              {history.length}
-            </span>
-          )}
+      {/* ② Журнал закрытых чеков */}
+      <section aria-label="Журнал закрытых чеков">
+        <h2 className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-zinc-500">
+          Журнал закрытых чеков
         </h2>
-
         {history.length === 0 ? (
-          <div className="mt-3 rounded-2xl border border-dashed border-[#262B35] bg-[#161922]/60 p-6 text-center">
-            <RotateCcw className="mx-auto h-8 w-8 text-zinc-600" />
-            <p className="mt-2 text-sm font-bold text-zinc-400">Выполненных заказов пока нет</p>
-            <p className="text-xs text-zinc-600">Чеки попадут сюда после выноса «ОТДАНО РАННЕРУ»</p>
+          <div className="rounded-2xl border border-dashed border-[#262B35] px-4 py-8 text-center text-[13px] font-bold text-zinc-600">
+            Пока ни одного закрытого чека
           </div>
         ) : (
-          <div className="nice-scroll mt-3 max-h-[26rem] space-y-3 overflow-y-auto pr-1">
-            {history.map((order) => (
-              <HistoryCard key={order.id} order={order} now={now} />
+          <div className="max-h-96 overflow-y-auto nice-scroll flex flex-col gap-2 rounded-2xl border border-[#262B35] bg-[#161922] p-3">
+            {history.map((check) => (
+              <article
+                key={check.orderId}
+                className={cn(
+                  'rounded-xl border p-3',
+                  check.vip ? 'border-[#D4AF37]/40 bg-[#D4AF37]/5' : 'border-[#262B35] bg-[#0D0F12]',
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[15px] font-black text-[#F5F1E8]">Стол {check.table}</span>
+                  <span className="text-[12px] font-bold text-zinc-400">{check.waiter}</span>
+                  {check.vip && <span className="text-[11px] font-black text-[#D4AF37]">⭐ ВИП</span>}
+                  <span className="ml-auto tabular-nums text-[12px] font-black text-emerald-300">
+                    закрыт {formatClock(check.closedAt)}
+                  </span>
+                </div>
+                <p className="mt-1 text-[12.5px] font-bold leading-snug text-zinc-400">
+                  {check.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}
+                </p>
+                {check.comment && (
+                  <p className="mt-0.5 text-[11px] font-bold text-amber-300/80">💬 {check.comment}</p>
+                )}
+              </article>
             ))}
           </div>
         )}
       </section>
 
-      {/* раздел 3: сброс */}
-      <ResetSection />
-      <p className="mt-3 pb-1 text-center text-[10px] font-semibold text-zinc-600">
-        ВИТАЛИК · смена {formatDateRu(analytics.date) || '—'} · заказано {analytics.orderedDishes} · отдано{' '}
-        {analytics.servedOrders}
-      </p>
-    </main>
+      {/* ③ Сброс тестовых данных */}
+      <button
+        type="button"
+        onClick={() => {
+          haptic(12)
+          setPinOpen(true)
+        }}
+        className="mt-2 h-[56px] rounded-2xl border-2 border-[#EF4444]/60 bg-[#EF4444]/10 text-[15px] font-black text-[#EF4444] active:scale-[0.98]"
+      >
+        🗑 СБРОСИТЬ ТЕСТОВЫЕ ДАННЫЕ И НАЧАТЬ СМЕНУ
+      </button>
+
+      {/* PIN-диалог */}
+      <Dialog open={pinOpen} onOpenChange={setPinOpen}>
+        <DialogContent aria-describedby={undefined} className="max-w-[520px] rounded-3xl border-[#262B35] bg-[#161922] text-[#F5F1E8]">
+          <DialogHeader>
+            <DialogTitle className="text-[#EF4444]">Подтверждение сброса</DialogTitle>
+          </DialogHeader>
+          <p className="text-[13px] font-bold leading-relaxed text-zinc-400">
+            Будут очищены: все заказы, счётчики, стоп-листы и журнал чеков.
+            Введите PIN-код для подтверждения.
+          </p>
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={4}
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            placeholder="••••"
+            className={cn(
+              'mt-2 h-[60px] w-full rounded-2xl border border-[#262B35] bg-[#0D0F12] text-center text-[26px] font-black tracking-[0.5em] text-[#F5F1E8] placeholder:text-zinc-700',
+              shake && 'animate-shake border-[#EF4444]',
+            )}
+            aria-label="PIN-код"
+          />
+          <button
+            type="button"
+            disabled={resetting || pin.length < 4}
+            onClick={() => void doReset()}
+            className="mt-2 h-[56px] rounded-2xl bg-[#EF4444] text-[16px] font-black text-white disabled:opacity-40 active:scale-[0.98]"
+          >
+            {resetting ? 'Сбрасываем…' : 'ПОДТВЕРДИТЬ СБРОС'}
+          </button>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }

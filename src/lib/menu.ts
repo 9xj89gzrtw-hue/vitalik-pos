@@ -1,40 +1,37 @@
-import type { CoursePriority, MenuItem, Period, Station, TableInfo } from './types'
+import type { CookId, CookInfo, MenuItem, Period } from './types'
 
 /* ============================================================
-   ВИТАЛИК — меню ресторана, столы, имена официантов, пресеты
+   ВИТАЛИК v6 — меню ресторана, столы, повара, пресеты.
+   3 повара (цеха): 1 — Закуски и Десерты, 2 — Салаты и Завтрак,
+   3 — Горячее и Гарниры.
    ============================================================ */
 
 /** Столы 1–12 (ровно двенадцать) */
-export const TABLES: TableInfo[] = Array.from({ length: 12 }, (_, i) => ({
-  id: `t${i + 1}`,
-  label: `Стол ${i + 1}`,
-  short: String(i + 1),
-  banquet: false,
-}))
-
-export const TABLES_BY_ID: ReadonlyMap<string, TableInfo> = new Map(TABLES.map((t) => [t.id, t]))
-
-export function tableLabelOf(tableId: string): string {
-  return TABLES_BY_ID.get(tableId)?.label ?? tableId
-}
-
-export function tableShortOf(tableId: string): string {
-  return TABLES_BY_ID.get(tableId)?.short ?? tableId
-}
+export const TABLES: number[] = Array.from({ length: 12 }, (_, i) => i + 1)
 
 /** Официанты — ровно трое */
-export const WAITER_NAMES: readonly string[] = ['Саша', 'Денис', 'Вова']
+export const WAITER_NAMES = ['Саша', 'Денис', 'Вова'] as const
 
-/** Быстрые комментарии к блюду (в чеке) */
-export const QUICK_NOTES: readonly string[] = ['Без лука', 'Без соуса', 'Без сахара']
-
-/** Пресеты комментария к столу */
-export const TABLE_NOTE_PRESETS: readonly string[] = [
-  'Отдать строго после тоста',
-  'Детям первым',
-  'Гость опаздывает',
-  'Счёт сразу',
+/** Повара — ровно трое */
+export const COOKS: CookInfo[] = [
+  { id: 1, title: 'Повар 1', station: 'Закуски и Десерты' },
+  { id: 2, title: 'Повар 2', station: 'Салаты и Завтрак' },
+  { id: 3, title: 'Повар 3', station: 'Горячее и Гарниры' },
 ]
+
+export function cookTitle(id: CookId): string {
+  return COOKS.find((c) => c.id === id)?.title ?? `Повар ${id}`
+}
+
+export function cookStation(id: CookId): string {
+  return COOKS.find((c) => c.id === id)?.station ?? ''
+}
+
+/** Быстрые комментарии к блюду */
+export const QUICK_NOTES: readonly string[] = ['Без лука', 'Без соуса']
+
+/** Пресеты комментария к заказу (столу) */
+export const ORDER_NOTE_PRESETS: readonly string[] = ['Детям вперёд', 'После тоста']
 
 export const PERIOD_HOURS: Record<Period, string> = {
   breakfast: '10:00 – 12:00',
@@ -46,134 +43,178 @@ export const PERIOD_LABELS: Record<Period, string> = {
   lunch: 'Обед',
 }
 
-interface RawCategory {
+/** Порядок курсов в тикетах кухни: салаты → закуски → горячее → завтраки → десерты */
+export const COURSE_ORDER: string[] = [
+  'САЛАТЫ',
+  'ГОРЯЧИЕ ЗАКУСКИ',
+  'ГОРЯЧИЕ БЛЮДА',
+  'ГАРНИРЫ',
+  'ЗАВТРАКИ',
+  'ДЕСЕРТЫ',
+]
+
+export const GARNISH_CATEGORY = 'ГАРНИРЫ'
+
+interface RawItem {
+  id: string
   name: string
-  station: Station
-  course_priority: number
-  items: { id: string; name: string; description?: string; time: string }[]
+  short: string
+  description?: string
 }
 
-const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
+interface RawMenu {
+  breakfast: { categories: { name: string; cook: CookId; items: RawItem[] }[] }
+  lunch: { categories: { name: string; cook: CookId; items: RawItem[] }[] }
+}
+
+const RAW_MENU: RawMenu = {
   breakfast: {
-    hours: '10:00 - 12:00',
     categories: [
       {
-        name: 'Завтраки',
-        station: 'breakfast',
-        course_priority: 1,
+        name: 'ЗАВТРАКИ',
+        cook: 2,
         items: [
-          { id: 'b1', name: 'Овсяная каша со свежими фруктами', time: '8 мин' },
-          { id: 'b2', name: 'Мини-сырники с муссом, сметаной и Nutella', time: '12 мин' },
-          { id: 'b3', name: 'Классический омлет с сыром и овощами', time: '10 мин' },
+          {
+            id: 'b1',
+            name: 'Овсяная каша со свежими фруктами',
+            short: 'Овсяная каша',
+            description: 'Со свежими сезонными фруктами',
+          },
+          {
+            id: 'b2',
+            name: 'Мини-сырники с муссом, сметаной и Nutella от Ferrero',
+            short: 'Сырники',
+            description: 'С муссом, сметаной и Nutella от Ferrero',
+          },
+          {
+            id: 'b3',
+            name: 'Классический омлет с сыром и свежими овощами',
+            short: 'Омлет',
+            description: 'С сыром и свежими овощами',
+          },
         ],
       },
     ],
   },
   lunch: {
-    hours: '12:00 - 18:00',
     categories: [
       {
         name: 'САЛАТЫ',
-        station: 'cold',
-        course_priority: 1,
+        cook: 2,
         items: [
           {
             id: 's1',
             name: 'Ростбиф с листьями салата',
-            description: 'Подается с цукини, вялеными томатами и пармезаном в соусе Чимичурри',
-            time: '7 мин',
+            short: 'Ростбиф',
+            description: 'Цукини, вяленые томаты, пармезан, чимичурри',
           },
           {
             id: 's2',
             name: 'Копченая свекла со страчателлой',
-            description: 'С жареными томатами, лаймовым соусом и орехами пекан',
-            time: '7 мин',
+            short: 'Свекла со страчателлой',
+            description: 'Жареные томаты, лаймовый соус, пекан',
           },
           {
             id: 's3',
             name: 'Салат с гравлаксом из лосося',
-            description: 'С перепелиным яйцом на листьях шпината и эстрагоновым соусом',
-            time: '8 мин',
+            short: 'Гравлакс',
+            description: 'Перепелиное яйцо, шпинат, эстрагон',
           },
         ],
       },
       {
         name: 'ГОРЯЧИЕ ЗАКУСКИ',
-        station: 'hot_appetizer',
-        course_priority: 2,
+        cook: 1,
         items: [
           {
             id: 'ha1',
             name: 'Сибас в гремолате с цукини',
-            description: 'В приправе из ароматного букета зелени, лимона и пармезана',
-            time: '12 мин',
+            short: 'Сибас',
+            description: 'Зелень, лимон, пармезан',
           },
           {
             id: 'ha2',
             name: 'Драники из батата с гуакамоле',
-            description: 'С йогуртовым соусом и вешенками',
-            time: '14 мин',
+            short: 'Драники',
+            description: 'Йогуртовый соус, вешенки',
           },
           {
             id: 'ha3',
             name: 'Кокиль с телятиной',
-            description: 'Томленая телятина в сливочном соусе с грибами, запеченная с моцареллой',
-            time: '15 мин',
+            short: 'Кокиль',
+            description: 'Томленая телятина, сливочный соус, грибы, моцарелла',
           },
         ],
       },
       {
         name: 'ГОРЯЧИЕ БЛЮДА',
-        station: 'hot_main',
-        course_priority: 3,
+        cook: 3,
         items: [
-          { id: 'm1', name: 'Утиная грудка с соусом вишня-мадера', description: 'С соусом из вишни и Мадеры', time: '18 мин' },
+          {
+            id: 'm1',
+            name: 'Утиная грудка',
+            short: 'Утка',
+            description: 'Соус вишня-мадера',
+          },
           {
             id: 'm2',
             name: 'Брискет из говядины',
-            description: 'В соусе демиглас с конкассе из томатов на бланшированных цукини',
-            time: '16 мин',
+            short: 'Брискет',
+            description: 'Демиглас, томаты конкассе, цукини',
           },
-          { id: 'm3', name: 'Креветки в катаифи', description: 'С манговым чатни', time: '14 мин' },
+          {
+            id: 'm3',
+            name: 'Креветки в катаифи',
+            short: 'Креветки',
+            description: 'Манговый чатни',
+          },
         ],
       },
       {
         name: 'ГАРНИРЫ',
-        station: 'hot_main',
-        course_priority: 3,
+        cook: 3,
         items: [
           {
             id: 'sd1',
             name: 'Картофель беби с розмарином',
-            description: 'Обжаренный на сливочном масле с розмарином',
-            time: '10 мин',
+            short: 'Картофель беби',
+            description: 'Обжарен на сливочном масле с розмарином',
           },
           {
             id: 'sd2',
             name: 'Овощное соте',
-            description: 'Баклажан, цукини, перец болгарский, шампиньоны',
-            time: '12 мин',
+            short: 'Овощное соте',
+            description: 'Баклажан, цукини, перец, шампиньоны',
           },
-          { id: 'sd3', name: 'Жасминовый рис припущенный', description: 'Припущенный рис', time: '6 мин' },
+          {
+            id: 'sd3',
+            name: 'Жасминовый рис припущенный',
+            short: 'Жасминовый рис',
+            description: 'Припущенный жасминовый рис',
+          },
         ],
       },
       {
         name: 'ДЕСЕРТЫ',
-        station: 'pastry',
-        course_priority: 4,
+        cook: 1,
         items: [
-          { id: 'd1', name: 'Брауни с фундуком и Nutella', description: 'С пастой Nutella от Ferrero', time: '6 мин' },
+          {
+            id: 'd1',
+            name: 'Брауни с фундуком и Nutella',
+            short: 'Брауни',
+            description: 'С фундуком и Nutella от Ferrero',
+          },
           {
             id: 'd2',
             name: 'Томленая слива со сливочным лабне',
-            description: 'С мускатом и апельсиновым маслом',
-            time: '7 мин',
+            short: 'Томленая слива',
+            description: 'Со сливочным лабне',
           },
           {
             id: 'd3',
             name: 'Мини-чизкейк с ягодами',
-            description: 'С прослойкой из экзотических фруктов и свежими ягодами',
-            time: '5 мин',
+            short: 'Чизкейк',
+            description: 'С прослойкой из экзотических фруктов',
           },
         ],
       },
@@ -181,22 +222,34 @@ const RAW_MENU: Record<Period, { hours: string; categories: RawCategory[] }> = {
   },
 }
 
-/** Плоский список всех позиций меню */
-export const MENU: MenuItem[] = (Object.keys(RAW_MENU) as Period[]).flatMap((period) =>
-  RAW_MENU[period].categories.flatMap((cat) =>
-    cat.items.map((it) => ({
-      id: it.id,
-      name: it.name,
-      description: it.description,
-      time: it.time,
-      station: cat.station,
-      coursePriority: cat.course_priority as CoursePriority,
-      category: cat.name,
-      period,
-      isGarnish: cat.name === 'ГАРНИРЫ',
-    })),
-  ),
-)
+/** Сырники (Завтрак) готовит Повар 1 (Закуски и Десерты) — по ТЗ */
+const COOK_OVERRIDES: Record<string, CookId> = { b2: 1 }
+
+const buildMenu = (): MenuItem[] => {
+  const out: MenuItem[] = []
+  for (const period of ['breakfast', 'lunch'] as Period[]) {
+    for (const cat of RAW_MENU[period].categories) {
+      for (const it of cat.items) {
+        out.push({
+          id: it.id,
+          name: it.name,
+          short: it.short,
+          description: it.description,
+          category: cat.name,
+          period,
+          cook: COOK_OVERRIDES[it.id] ?? cat.cook,
+          garnishAttachable:
+            cat.name === 'ГОРЯЧИЕ ЗАКУСКИ' || cat.name === 'ГОРЯЧИЕ БЛЮДА',
+          isGarnish: cat.name === GARNISH_CATEGORY,
+        })
+      }
+    }
+  }
+  return out
+}
+
+/** Плоский список всех 18 позиций меню */
+export const MENU: MenuItem[] = buildMenu()
 
 const MENU_INDEX = new Map(MENU.map((m) => [m.id, m]))
 
@@ -204,26 +257,13 @@ export function findMenuItem(id: string): MenuItem | undefined {
   return MENU_INDEX.get(id)
 }
 
-/* ---------- категории ---------- */
-
-export interface MenuCategory {
-  name: string
-  chipLabel: string
-}
-
-const CHIP_LABELS: Record<string, string> = {
-  Завтраки: 'Завтраки',
-  САЛАТЫ: 'Салаты',
-  'ГОРЯЧИЕ ЗАКУСКИ': 'Закуски',
-  'ГОРЯЧИЕ БЛЮДА': 'Горячее',
-  ГАРНИРЫ: 'Гарниры',
-  ДЕСЕРТЫ: 'Десерты',
-}
-
-export function categoriesForPeriod(period: Period): MenuCategory[] {
+/** Категории и блюда активной смены */
+export function categoriesForPeriod(period: Period): { name: string; items: MenuItem[] }[] {
   return RAW_MENU[period].categories.map((c) => ({
     name: c.name,
-    chipLabel: CHIP_LABELS[c.name] ?? c.name,
+    items: c.items
+      .map((it) => MENU_INDEX.get(it.id))
+      .filter((it): it is MenuItem => !!it),
   }))
 }
 
@@ -231,44 +271,14 @@ export function itemsForPeriod(period: Period): MenuItem[] {
   return MENU.filter((m) => m.period === period)
 }
 
-/* ---------- гарниры ---------- */
-
-export const GARNISH_CATEGORY = 'ГАРНИРЫ'
-
-/** Категории блюд, к которым можно привязать гарнир */
-export const ATTACHABLE_CATEGORIES: readonly string[] = ['ГОРЯЧИЕ ЗАКУСКИ', 'ГОРЯЧИЕ БЛЮДА']
-
-/** Гарниры для всплывающего окна (sd1…sd3) */
-export const GARNISH_ITEMS: MenuItem[] = MENU.filter((m) => m.category === GARNISH_CATEGORY)
+/** Гарниры для окна выбора: sd1…sd3 */
+export const GARNISH_ITEMS: MenuItem[] = MENU.filter((m) => m.isGarnish)
 
 export const GARNISH_IDS: ReadonlySet<string> = new Set(GARNISH_ITEMS.map((g) => g.id))
 
-/** К блюду можно привязать гарнир? (горячие закуски и горячие блюда) */
-export function isGarnishAttachable(item: MenuItem): boolean {
-  return ATTACHABLE_CATEGORIES.includes(item.category)
-}
-
-/** Дательный падеж для сводки гарниров («к Утке», «к Сибасу») */
-export const DATIVE_NAMES: Record<string, string> = {
-  ha1: 'Сибасу',
-  ha2: 'Драникам',
-  ha3: 'Кокилю',
-  m1: 'Утке',
-  m2: 'Брискету',
-  m3: 'Креветкам',
-}
-
-/** Период по умолчанию по системному времени: 10:00–12:00 → завтрак, иначе обед */
+/** Период по умолчанию по системному времени: 10:00–12:00 → завтрак */
 export function defaultPeriod(now = new Date()): Period {
   const h = now.getHours()
   if (h >= 10 && h < 12) return 'breakfast'
   return 'lunch'
-}
-
-/** Названия курсов для сводки цехов (батчинг) */
-export const COURSE_TITLES: Record<CoursePriority, string> = {
-  1: 'Салаты',
-  2: 'Горячие закуски',
-  3: 'Горячие блюда и гарниры',
-  4: 'Десерты',
 }

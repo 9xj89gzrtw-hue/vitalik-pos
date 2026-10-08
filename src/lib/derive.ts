@@ -1,260 +1,19 @@
-import type { Order, OrderItem, OrderStatus, StopControl, StopList } from './types'
-import { DATIVE_NAMES, tableShortOf } from './menu'
+import { COOKS, COURSE_ORDER, findMenuItem } from './menu'
+import { cookingOf, queuedOf, readyOf, servedOf } from './types'
+import type { CookId, Order, OrderItem } from './types'
 
 /* ============================================================
-   ВИТАЛИК — производные структуры: стадии заказа, радар столов,
-   группировка тикетов кухни, сводка цехов, таймеры, стоп-лист.
+   ВИТАЛИК v6 — производные структуры: статусы позиций,
+   сводка цехов (батчинг), подсказка суфлера, тикеты кухни.
    ============================================================ */
 
-/* ---------- 3-стадийная шкала для зала ---------- */
+/* ---------- форматирование ---------- */
 
-export type StageKey = 'sent' | 'cooking' | 'ready'
-
-export interface StageState {
-  key: StageKey
-  label: string
-  reached: boolean
-  active: boolean
-  time: number | null
+export function formatClock(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-export const STAGE_LABELS: Record<StageKey, string> = {
-  sent: 'В очереди',
-  cooking: 'Готовится',
-  ready: 'НА РАЗДАЧЕ',
-}
-
-/** ⏳ В очереди → 🔥 Готовится → 🟢 ГОТОВО НА РАЗДАЧЕ (served = всё пройдено) */
-export function orderStages(o: Order): StageState[] {
-  const st = o.status
-  return [
-    { key: 'sent', label: STAGE_LABELS.sent, reached: true, active: st === 'sent', time: o.sentAt },
-    {
-      key: 'cooking',
-      label: STAGE_LABELS.cooking,
-      reached: st === 'cooking' || st === 'ready' || st === 'served',
-      active: st === 'cooking',
-      time: o.acceptedAt,
-    },
-    {
-      key: 'ready',
-      label: STAGE_LABELS.ready,
-      reached: st === 'ready' || st === 'served',
-      active: st === 'ready',
-      time: o.readyAt,
-    },
-  ]
-}
-
-/* ---------- стоп-лист и остатки ---------- */
-
-const NO_STOP: StopControl = { stopped: false, remaining: null }
-
-/** Текущее состояние блюда в стоп-листе (с безопасным дефолтом) */
-export function stopInfo(stopList: StopList, menuItemId: string): StopControl {
-  return stopList?.[menuItemId] ?? NO_STOP
-}
-
-/** Блюдо доступно к заказу? */
-export function isDishAvailable(stopList: StopList, menuItemId: string): boolean {
-  const c = stopInfo(stopList, menuItemId)
-  return !c.stopped && (c.remaining == null || c.remaining > 0)
-}
-
-/* ---------- выборки ---------- */
-
-export function activeOrders(orders: Order[]): Order[] {
-  return orders.filter((o) => o.status !== 'served')
-}
-
-export function servedToday(orders: Order[]): Order[] {
-  return orders.filter((o) => o.status === 'served')
-}
-
-export function orderPieces(o: Order): number {
-  return o.items.reduce((acc, i) => acc + i.qty, 0)
-}
-
-/* ---------- радар зала ---------- */
-
-export type TableStatus = 'free' | 'sent' | 'cooking' | 'ready'
-
-export interface TableState {
-  status: TableStatus
-  order: Order | null
-  /** заказ висит дольше 20 минут и ещё не на раздаче */
-  overdue: boolean
-}
-
-export const LATE_THRESHOLD_MS = 20 * 60 * 1000
-
-export function buildTableMap(orders: Order[], now = Date.now()): Map<string, TableState> {
-  const map = new Map<string, TableState>()
-  for (const o of orders) {
-    if (o.status === 'served') continue
-    // активных заказов на столе максимум один (дозаказы склеиваются)
-    const prev = map.get(o.tableId)
-    if (!prev || o.sentAt < prev.order!.sentAt) {
-      map.set(o.tableId, {
-        status: o.status as TableStatus,
-        order: o,
-        overdue:
-          (o.status === 'sent' || o.status === 'cooking') &&
-          now - o.sentAt > LATE_THRESHOLD_MS,
-      })
-    }
-  }
-  return map
-}
-
-/* ---------- группировка тикета кухни ---------- */
-
-export interface KitchenGroup {
-  title: string
-  items: OrderItem[]
-}
-
-const STATION_TITLES: { station: string; title: string }[] = [
-  { station: 'breakfast', title: 'ЗАВТРАКИ' },
-  { station: 'cold', title: 'САЛАТЫ' },
-  { station: 'hot_appetizer', title: 'ГОРЯЧИЕ ЗАКУСКИ' },
-  { station: 'hot_main', title: 'ГОРЯЧИЕ БЛЮДА И ГАРНИРЫ' },
-  { station: 'pastry', title: 'ДЕСЕРТЫ' },
-]
-
-export interface KitchenTicket {
-  groups: KitchenGroup[]
-  addendumItems: OrderItem[]
-}
-
-export function buildKitchenTicket(o: Order): KitchenTicket {
-  const main = o.items.filter((i) => !i.isAddendum)
-  const addendumItems = o.items.filter((i) => i.isAddendum)
-  const groups: KitchenGroup[] = []
-  for (const { station, title } of STATION_TITLES) {
-    const items = main.filter((i) => i.station === station)
-    if (items.length) groups.push({ title, items })
-  }
-  return { groups, addendumItems }
-}
-
-/* ---------- сводка цехов (батчинг) ---------- */
-
-export interface BatchChip {
-  label: string
-  qty: number
-  vip: boolean
-}
-
-export interface BatchRow {
-  key: string
-  name: string
-  totalQty: number
-  chips: BatchChip[]
-}
-
-export interface BatchSection {
-  key: string
-  title: string
-  rows: BatchRow[]
-  totalQty: number
-}
-
-/** Сводка по всем активным столам: блюда в работе (queued + cooking) */
-export function buildBatch(orders: Order[]): BatchSection[] {
-  const live = activeOrders(orders)
-  const sections: BatchSection[] = []
-
-  const pushRow = (map: Map<string, BatchRow>, key: string, name: string, chip: BatchChip, qty: number) => {
-    const row = map.get(key) ?? { key, name, totalQty: 0, chips: [] }
-    row.totalQty += qty
-    const existing = row.chips.find((c) => c.label === chip.label && c.vip === chip.vip)
-    if (existing) existing.qty += qty
-    else row.chips.push({ ...chip, qty })
-    map.set(key, row)
-  }
-
-  for (const { station, title } of STATION_TITLES) {
-    const map = new Map<string, BatchRow>()
-    for (const o of live) {
-      for (const item of o.items) {
-        if (item.station !== station) continue
-        if (item.status === 'ready') continue
-        // отдельные гарниры идут в агрегированный блок ГАРНИРЫ
-        if (station === 'hot_main' && item.standalone) continue
-        if (station === 'hot_main' && item.garnishId) {
-          // само блюдо с привязанным гарниром остаётся строкой «Утиная грудка»
-        }
-        pushRow(
-          map,
-          item.menuItemId,
-          item.name,
-          { label: tableShortOf(o.tableId), qty: 0, vip: o.isVIP },
-          item.qty,
-        )
-      }
-    }
-    const rows = [...map.values()].sort((a, b) => b.totalQty - a.totalQty)
-    if (rows.length) {
-      sections.push({
-        key: station,
-        title,
-        rows,
-        totalQty: rows.reduce((acc, r) => acc + r.totalQty, 0),
-      })
-    }
-  }
-
-  // агрегированный блок ГАРНИРЫ: привязанные (контекст «к Утке») + отдельные
-  const garnishMap = new Map<string, BatchRow>()
-  for (const o of live) {
-    for (const item of o.items) {
-      if (item.status === 'ready') continue
-      if (item.standalone) {
-        pushRow(
-          garnishMap,
-          `standalone:${item.menuItemId}`,
-          `${item.name} (отдельно)`,
-          { label: tableShortOf(o.tableId), qty: 0, vip: o.isVIP },
-          item.qty,
-        )
-      } else if (item.garnishId) {
-        const dative = DATIVE_NAMES[item.menuItemId] ?? item.name
-        pushRow(
-          garnishMap,
-          `attached:${item.garnishId}`,
-          item.garnishName ?? item.name,
-          { label: `${tableShortOf(o.tableId)} · к ${dative}`, qty: 0, vip: o.isVIP },
-          item.qty,
-        )
-      }
-    }
-  }
-  const garnishRows = [...garnishMap.values()].sort((a, b) => b.totalQty - a.totalQty)
-  if (garnishRows.length) {
-    // вставляем блок гарниров сразу после горячих блюд
-    const hotIdx = sections.findIndex((s) => s.key === 'hot_main')
-    const section: BatchSection = {
-      key: 'garnish',
-      title: 'ГАРНИРЫ — суммарно',
-      rows: garnishRows,
-      totalQty: garnishRows.reduce((acc, r) => acc + r.totalQty, 0),
-    }
-    if (hotIdx >= 0) sections.splice(hotIdx + 1, 0, section)
-    else sections.push(section)
-  }
-
-  return sections
-}
-
-/* ---------- таймеры и форматирование ---------- */
-
-/** Позиции блюда, готовые к выносу (галочки в статусе стола) */
-export function readyPieces(o: Order): number {
-  return o.items.filter((i) => i.status === 'ready').reduce((acc, i) => acc + i.qty, 0)
-}
-
-/** «12:35» — минуты:секунды с момента */
 export function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const m = Math.floor(total / 60)
@@ -262,27 +21,12 @@ export function formatElapsed(ms: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-/** «12:45» — часы:минуты времени */
-export function formatClock(ts: number): string {
-  const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
-/** «8 мин назад» / «только что» */
-export function minutesAgo(ts: number, now = Date.now()): string {
-  const min = Math.floor((now - ts) / 60000)
-  if (min < 1) return 'только что'
-  if (min === 1) return '1 мин назад'
-  return `${min} мин назад`
-}
-
-export type TimerLevel = 'ok' | 'warn' | 'late'
-
-/** 0–10 мин — норма, 10–20 — внимание, >20 — опоздание */
-export function timerLevel(elapsedMs: number): TimerLevel {
-  if (elapsedMs < 10 * 60 * 1000) return 'ok'
-  if (elapsedMs < 20 * 60 * 1000) return 'warn'
-  return 'late'
+export function pluralPortions(n: number): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return `${n} порция`
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} порции`
+  return `${n} порций`
 }
 
 export function pluralDishes(n: number): string {
@@ -293,39 +37,250 @@ export function pluralDishes(n: number): string {
   return `${n} блюд`
 }
 
-export function pluralPositions(n: number): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return `${n} позиция`
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} позиции`
-  return `${n} позиций`
+/* ---------- статусы позиции (по порциям) ---------- */
+
+export interface PortionChips {
+  queued: number
+  cooking: number
+  ready: number
+  served: number
 }
 
-export function pluralTables(n: number): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return `${n} стол`
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} стола`
-  return `${n} столов`
+export function portionChips(it: OrderItem): PortionChips {
+  return {
+    queued: queuedOf(it),
+    cooking: cookingOf(it),
+    ready: readyOf(it),
+    served: servedOf(it),
+  }
 }
 
-/** Сортировка заказов кухни: ВИП первыми, затем хронология */
-export function sortKitchenOrders(orders: Order[]): Order[] {
-  return [...orders].sort((a, b) => {
-    if (a.isVIP !== b.isVIP) return a.isVIP ? -1 : 1
-    return a.sentAt - b.sentAt
+/** Агрегированный статус строки для тикетов/зала */
+export type ItemPhase = 'queued' | 'cooking' | 'ready' | 'served' | 'mixed'
+
+export function itemPhase(it: OrderItem): ItemPhase {
+  const { queued, cooking, ready, served } = portionChips(it)
+  if (queued === 0 && cooking === 0 && ready === 0) return 'served'
+  if (ready > 0 && queued === 0 && cooking === 0) return 'ready'
+  if (queued > 0 && cooking === 0 && ready === 0) return 'queued'
+  if (cooking > 0 && queued === 0 && ready === 0) return 'cooking'
+  return 'mixed'
+}
+
+export const PHASE_META: Record<ItemPhase, { icon: string; label: string; cls: string }> = {
+  queued: { icon: '⏳', label: 'В очереди', cls: 'text-zinc-400' },
+  cooking: { icon: '🔥', label: 'Готовится', cls: 'text-amber-300' },
+  ready: { icon: '🟢', label: 'ГОТОВО НА РАЗДАЧЕ', cls: 'text-emerald-300' },
+  served: { icon: '⚪', label: 'Подано', cls: 'text-zinc-500' },
+  mixed: { icon: '🔁', label: 'Частично', cls: 'text-amber-200' },
+}
+
+/* ---------- сортировка заказов ---------- */
+
+export function sortOrders(orders: Order[]): Order[] {
+  return [...orders].sort(
+    (a, b) => (b.vip ? 1 : 0) - (a.vip ? 1 : 0) || a.createdAt - b.createdAt,
+  )
+}
+
+/* ---------- сводка цехов (батчинг) ---------- */
+
+export interface TableBreakdown {
+  table: number
+  qty: number
+  vip: boolean
+}
+
+export interface DishGroup {
+  menuItemId: string
+  name: string
+  cook: CookId
+  /** есть порции в ВИП-заказах */
+  vip: boolean
+  total: number
+  cooking: number
+  queued: number
+  cookingTables: TableBreakdown[]
+  queuedTables: TableBreakdown[]
+}
+
+/** Группировка всех открытых заказов по блюду (для батчинга) */
+export function buildDishGroups(orders: Order[]): DishGroup[] {
+  const map = new Map<string, DishGroup>()
+  for (const o of orders) {
+    for (const it of o.items) {
+      const dish = findMenuItem(it.menuItemId)
+      if (!dish) continue
+      let g = map.get(it.menuItemId)
+      if (!g) {
+        g = {
+          menuItemId: it.menuItemId,
+          name: it.name,
+          cook: dish.cook,
+          vip: false,
+          total: 0,
+          cooking: 0,
+          queued: 0,
+          cookingTables: [],
+          queuedTables: [],
+        }
+        map.set(it.menuItemId, g)
+      }
+      const cooking = cookingOf(it)
+      const queued = queuedOf(it)
+      g.total += it.qty
+      g.cooking += cooking
+      g.queued += queued
+      if (o.vip) g.vip = true
+      if (cooking > 0) {
+        const ex = g.cookingTables.find((t) => t.table === o.table)
+        if (ex) ex.qty += cooking
+        else g.cookingTables.push({ table: o.table, qty: cooking, vip: o.vip })
+      }
+      if (queued > 0) {
+        const ex = g.queuedTables.find((t) => t.table === o.table)
+        if (ex) ex.qty += queued
+        else g.queuedTables.push({ table: o.table, qty: queued, vip: o.vip })
+      }
+    }
+  }
+  return [...map.values()].sort(
+    (a, b) => b.queued + b.cooking - (a.queued + a.cooking) || (b.vip ? 1 : 0) - (a.vip ? 1 : 0),
+  )
+}
+
+/** Группы по цехам (попро официантам: Повар 1/2/3) */
+export interface CookSection {
+  cook: CookId
+  title: string
+  station: string
+  groups: DishGroup[]
+  cooking: number
+}
+
+export function buildCookSections(orders: Order[]): CookSection[] {
+  const groups = buildDishGroups(orders)
+  return COOKS.map((c) => {
+    const own = groups.filter((g) => g.cook === c.id)
+    return {
+      cook: c.id,
+      title: c.title,
+      station: c.station,
+      groups: own,
+      cooking: own.reduce((acc, g) => acc + g.cooking, 0),
+    }
   })
 }
 
-export function kitchenStatusText(status: OrderStatus): string {
-  switch (status) {
-    case 'sent':
-      return 'Ждёт подтверждения кухни'
-    case 'cooking':
-      return 'Готовится'
-    case 'ready':
-      return 'НА РАЗДАЧЕ — ждёт раннера'
-    case 'served':
-      return 'Отдано в зал'
+/* ---------- умная подсказка суфлера ---------- */
+
+export interface SuflerHint {
+  cook: CookId
+  cookTitle: string
+  station: string
+  menuItemId: string
+  name: string
+  count: number
+  tables: number[]
+  vip: boolean
+}
+
+/**
+ * Алгоритм: находим повара без порций «в готовке», среди его блюд —
+ * наибольшее скопление неозвученных порций (ВИП-блюда приоритетнее).
+ */
+export function buildSuflerHint(orders: Order[]): SuflerHint | null {
+  const sections = buildCookSections(orders)
+  const free = sections.filter((s) => s.cooking === 0)
+  if (free.length === 0) return null
+
+  let best: { section: CookSection; group: DishGroup } | null = null
+  for (const section of free) {
+    for (const group of section.groups) {
+      if (group.queued <= 0) continue
+      if (
+        !best ||
+        group.queued > best.group.queued ||
+        (group.queued === best.group.queued && group.vip && !best.group.vip)
+      ) {
+        best = { section, group }
+      }
+    }
   }
+  if (!best) return null
+
+  return {
+    cook: best.section.cook,
+    cookTitle: best.section.title,
+    station: best.section.station,
+    menuItemId: best.group.menuItemId,
+    name: best.group.name,
+    count: best.group.queued,
+    tables: best.group.queuedTables.map((t) => t.table).sort((a, b) => a - b),
+    vip: best.group.vip,
+  }
+}
+
+/* ---------- тикеты кухни: курсы с вложенными гарнирами ---------- */
+
+export interface TicketLine {
+  item: OrderItem
+  garnishes: OrderItem[]
+}
+
+export interface TicketCourse {
+  title: string
+  lines: TicketLine[]
+}
+
+export function buildTicketCourses(order: Order): TicketCourse[] {
+  const mains = order.items.filter((i) => !i.garnishFor)
+  const courses: TicketCourse[] = []
+  const categoryOf = (id: string) => findMenuItem(id)?.category ?? ''
+  const ordered = [...mains].sort(
+    (a, b) =>
+      COURSE_ORDER.indexOf(categoryOf(a.menuItemId)) - COURSE_ORDER.indexOf(categoryOf(b.menuItemId)),
+  )
+  let lastTitle = ''
+  for (const item of ordered) {
+    const cat = categoryOf(item.menuItemId)
+    const title = cat === 'ЗАВТРАКИ' ? 'ЗАВТРАКИ' : cat
+    const garnishes = order.items.filter((i) => i.garnishFor === item.menuItemId)
+    if (title !== lastTitle) {
+      courses.push({ title, lines: [] })
+      lastTitle = title
+    }
+    courses[courses.length - 1].lines.push({ item, garnishes })
+  }
+  return courses
+}
+
+/* ---------- баннеры ВЫНОС для раннеров ---------- */
+
+export interface RunnerBannerData {
+  table: number
+  waiter: string
+  vip: boolean
+  dishes: string[]
+  portions: number
+}
+
+/** Столы, у которых есть готовые к выносу порции */
+export function buildRunnerBanners(orders: Order[]): RunnerBannerData[] {
+  const out: RunnerBannerData[] = []
+  for (const o of sortOrders(orders)) {
+    const dishes: string[] = []
+    let portions = 0
+    for (const it of o.items) {
+      const ready = readyOf(it)
+      if (ready > 0) {
+        dishes.push(`${ready}× ${it.name}`)
+        portions += ready
+      }
+    }
+    if (dishes.length > 0) {
+      out.push({ table: o.table, waiter: o.waiter, vip: o.vip, dishes, portions })
+    }
+  }
+  return out
 }

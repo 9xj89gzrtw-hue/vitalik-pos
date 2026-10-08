@@ -1,10 +1,11 @@
 'use client'
 
 import { BarChart3, ChefHat, ConciergeBell } from 'lucide-react'
-import { useAppStore } from '@/lib/store'
-import { activeOrders } from '@/lib/derive'
-import type { Screen } from '@/lib/types'
+import { useVitalik } from '@/lib/api-client'
+import { readyOf } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { useUi } from './ui'
+import type { Screen } from '@/lib/types'
 
 /* ============================================================
    Нижняя панель навигации — 3 экрана в 1 тап:
@@ -18,19 +19,18 @@ const TABS: { key: Screen; icon: typeof ConciergeBell; label: string }[] = [
 ]
 
 export function BottomNav() {
-  const screen = useAppStore((s) => s.screen)
-  const setScreen = useAppStore((s) => s.setScreen)
-  const orders = useAppStore((s) => s.orders)
-  const waiterName = useAppStore((s) => s.waiterName)
+  const { state } = useVitalik()
+  const { screen, setScreen, waiter } = useUi()
 
-  const active = activeOrders(orders)
+  const orders = state?.orders ?? []
 
-  // бейдж официанта: мои столы, ожидающие выноса с раздачи
-  const myReady = active.filter(
-    (o) => o.status === 'ready' && (!waiterName || o.waiterName === waiterName),
-  ).length
-  // бейдж кухни: заказы, ждущие приёмки шефом (красная тревога)
-  const unaccepted = active.filter((o) => o.status === 'sent').length
+  // бейдж официанта: столы с готовыми к выносу порциями (мои или все)
+  const myReady = orders
+    .filter((o) => !waiter || o.waiter === waiter)
+    .filter((o) => o.items.some((it) => readyOf(it) > 0)).length
+
+  // бейдж кухни: заказы, ждущие «ПРИНЯТЬ»
+  const unaccepted = orders.filter((o) => !o.acknowledged).length
 
   return (
     <nav
@@ -41,8 +41,7 @@ export function BottomNav() {
         {TABS.map((tab) => {
           const isActive = screen === tab.key
           const Icon = tab.icon
-          const badge =
-            tab.key === 'waiter' ? myReady : tab.key === 'kitchen' ? unaccepted : 0
+          const badge = tab.key === 'waiter' ? myReady : tab.key === 'kitchen' ? unaccepted : 0
           const alarm = tab.key === 'kitchen' && unaccepted > 0
           return (
             <button
@@ -59,7 +58,10 @@ export function BottomNav() {
                 <span className="absolute top-0 h-[3px] w-10 rounded-full bg-[#D4AF37]" aria-hidden />
               )}
               <span className="relative">
-                <Icon className={cn('h-6 w-6', alarm && 'animate-pulse')} strokeWidth={isActive ? 2.4 : 2} />
+                <Icon
+                  className={cn('h-6 w-6', alarm && 'animate-pulse')}
+                  strokeWidth={isActive ? 2.4 : 2}
+                />
                 {badge > 0 && (
                   <span
                     className={cn(

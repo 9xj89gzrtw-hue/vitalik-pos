@@ -1,266 +1,173 @@
 'use client'
 
 import { useState } from 'react'
-import { Zap } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { toast } from 'sonner'
+import { useVitalik } from '@/lib/api-client'
+import { haptic } from '@/lib/audio'
 import { MENU } from '@/lib/menu'
-import { useAppStore } from '@/lib/store'
-import { isDishAvailable, stopInfo } from '@/lib/derive'
-import type { MenuItem, StopList } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /* ============================================================
-   Режим 2 «Стоп-лист и Остатки»: все блюда MENU по категориям.
-   Тумблер [🚫 В СТОП] / [✅ Снять со стопа] и лимит остатка
-   (быстрые чипы + ввод 0–999). Изменения летят официантам
-   мгновенно через хаб (vk:stop:set / vk:stop:remaining).
+   Режим 3 — «Стоп-лист и Остатки»: у каждого блюда меню
+   [В СТОП] / [СНЯТЬ СО СТОПА] и [Задать лимит порций].
+   При достижении лимита 0 блюдо автоматически уходит в стоп.
    ============================================================ */
 
-const CATEGORY_ORDER: readonly string[] = [
-  'Завтраки',
-  'САЛАТЫ',
-  'ГОРЯЧИЕ ЗАКУСКИ',
-  'ГОРЯЧИЕ БЛЮДА',
-  'ГАРНИРЫ',
-  'ДЕСЕРТЫ',
-]
-
-const PERIOD_LABEL: Record<string, string> = {
-  breakfast: 'Завтрак',
-  lunch: 'Обед',
-}
-
-const QUICK_ADDS: readonly number[] = [2, 5, 10]
-
-/** Только цифры, 0–999 */
-function sanitizeRemainingInput(raw: string): string {
-  const digits = raw.replace(/\D+/g, '').slice(0, 3)
-  if (!digits) return ''
-  return String(Math.min(999, Math.max(0, parseInt(digits, 10))))
-}
-
-function parseRemaining(raw: string): number | null {
-  if (!raw) return null
-  const n = parseInt(raw, 10)
-  return Number.isFinite(n) ? Math.min(999, Math.max(0, n)) : null
-}
-
 export function StoplistTab() {
-  const stopList = useAppStore((s) => s.stopList)
+  const { state, mutate } = useVitalik()
+  const [limitEdit, setLimitEdit] = useState<string | null>(null)
+  const [limitValue, setLimitValue] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
 
-  const groups = CATEGORY_ORDER.map((cat) => ({
-    cat,
-    items: MENU.filter((m) => m.category === cat),
-  })).filter((g) => g.items.length > 0)
+  const stoplist = state?.stoplist ?? {}
+
+  const toggleStop = async (menuItemId: string, stopped: boolean) => {
+    if (busy) return
+    setBusy(menuItemId)
+    haptic(12)
+    const res = await mutate('/api/stoplist', { action: 'setStopped', menuItemId, stopped })
+    setBusy(null)
+    if (res) {
+      const dish = MENU.find((m) => m.id === menuItemId)
+      toast.success(stopped ? `«${dish?.short}» — В СТОПЕ` : `«${dish?.short}» — снова в продаже`)
+    }
+  }
+
+  const saveLimit = async (menuItemId: string) => {
+    if (busy) return
+    const raw = limitValue.trim()
+    const limit = raw === '' ? null : Number(raw)
+    setBusy(menuItemId)
+    haptic(12)
+    const res = await mutate('/api/stoplist', { action: 'setLimit', menuItemId, limit })
+    setBusy(null)
+    if (res) {
+      const dish = MENU.find((m) => m.id === menuItemId)
+      toast.success(limit == null ? `Лимит «${dish?.short}» снят` : `Лимит «${dish?.short}»: ${limit} порц.`)
+      setLimitEdit(null)
+      setLimitValue('')
+    }
+  }
+
+  // группы по категориям в порядке меню
+  const groups = new Map<string, typeof MENU>()
+  for (const dish of MENU) {
+    const list = groups.get(dish.category) ?? []
+    list.push(dish)
+    groups.set(dish.category, list)
+  }
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Подсказка */}
-      <div className="flex items-center gap-2 rounded-2xl border border-[#D4AF37]/30 bg-[#D4AF37]/[0.07] px-4 py-3">
-        <Zap className="h-4 w-4 shrink-0 text-[#D4AF37]" aria-hidden />
-        <p className="text-[12px] font-bold leading-snug text-amber-200/90">
-          Изменения видны официантам мгновенно
-        </p>
-      </div>
+    <div className="flex flex-col gap-4">
+      <p className="rounded-2xl border border-[#262B35] bg-[#161922] px-4 py-3 text-[12px] font-bold leading-relaxed text-zinc-500">
+        Блюдо «в стопе» — официанты не могут его заказать. Лимит порций списывается
+        автоматически при заказе; на 0 блюдо уходит в стоп.
+      </p>
 
-      {groups.map((group) => (
-        <section
-          key={group.cat}
-          aria-label={group.cat}
-          className="overflow-hidden rounded-3xl border border-[#262B35] bg-[#161922]"
-        >
-          <header className="flex items-center justify-between border-b border-[#262B35] px-4 py-2.5">
-            <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-400">
-              {group.cat}
-            </h3>
-            <span className="rounded-lg bg-[#232936] px-2 py-1 text-[11px] font-bold text-zinc-400">
-              {group.items.length} блюд
-            </span>
-          </header>
-          <div className="flex flex-col gap-2 px-3 py-3">
-            {group.items.map((item) => (
-              <StopRow key={item.id} item={item} stopList={stopList} />
-            ))}
-          </div>
+      {[...groups.entries()].map(([category, dishes]) => (
+        <section key={category} aria-label={category} className="flex flex-col gap-2">
+          <h3 className="text-[11px] font-black uppercase tracking-[0.14em] text-zinc-500">
+            {category}
+          </h3>
+          {dishes.map((dish) => {
+            const entry = stoplist[dish.id] ?? { stopped: false, limit: null, remaining: null }
+            const editing = limitEdit === dish.id
+            const isBusy = busy === dish.id
+            return (
+              <div
+                key={dish.id}
+                className={cn(
+                  'flex flex-col gap-2 rounded-2xl border p-4',
+                  entry.stopped
+                    ? 'border-[#EF4444]/50 bg-[#161922]'
+                    : 'border-[#262B35] bg-[#161922]',
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className={cn('text-[15px] font-bold leading-snug', entry.stopped ? 'text-red-400' : 'text-[#F5F1E8]')}>
+                      {dish.name}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {entry.stopped && (
+                        <span className="rounded-lg bg-[#EF4444]/15 px-2 py-0.5 text-[11px] font-black text-[#EF4444]">
+                          🚫 В СТОПЕ
+                        </span>
+                      )}
+                      {entry.limit != null && (
+                        <span className="rounded-lg bg-amber-500/15 px-2 py-0.5 text-[11px] font-black text-amber-300">
+                          ⚠️ Осталось: {entry.remaining ?? 0} из {entry.limit}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => void toggleStop(dish.id, !entry.stopped)}
+                    className={cn(
+                      'h-[48px] flex-1 rounded-2xl text-[13px] font-black active:scale-[0.98] disabled:opacity-50',
+                      entry.stopped
+                        ? 'bg-emerald-500/90 text-[#05140E]'
+                        : 'border border-[#EF4444]/50 bg-[#EF4444]/10 text-[#EF4444]',
+                    )}
+                  >
+                    {entry.stopped ? '✅ СНЯТЬ СО СТОПА' : '🚫 В СТОП'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptic(8)
+                      if (editing) {
+                        setLimitEdit(null)
+                        setLimitValue('')
+                      } else {
+                        setLimitEdit(dish.id)
+                        setLimitValue(entry.limit != null ? String(entry.limit) : '')
+                      }
+                    }}
+                    className={cn(
+                      'h-[48px] flex-1 rounded-2xl border text-[13px] font-black active:scale-[0.98]',
+                      editing
+                        ? 'border-[#D4AF37]/60 bg-[#D4AF37]/10 text-[#F5E29A]'
+                        : 'border-[#262B35] bg-[#0D0F12] text-zinc-400',
+                    )}
+                  >
+                    ⚖️ Задать лимит порций
+                  </button>
+                </div>
+
+                {editing && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={999}
+                      value={limitValue}
+                      onChange={(e) => setLimitValue(e.target.value)}
+                      placeholder="Пусто = без лимита"
+                      className="h-[52px] w-full rounded-2xl border border-[#262B35] bg-[#0D0F12] px-4 text-[16px] font-black tabular-nums text-[#F5F1E8] placeholder:text-zinc-600"
+                      aria-label="Лимит порций"
+                    />
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => void saveLimit(dish.id)}
+                      className="h-[52px] shrink-0 rounded-2xl bg-[#D4AF37] px-5 text-[14px] font-black text-[#14100A] disabled:opacity-50 active:scale-95"
+                    >
+                      Сохранить
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </section>
       ))}
-    </div>
-  )
-}
-
-/* Строка блюда: статус + управление стопом и остатком */
-function StopRow({ item, stopList }: { item: MenuItem; stopList: StopList }) {
-  const setStopDish = useAppStore((s) => s.setStopDish)
-  const setRemaining = useAppStore((s) => s.setRemaining)
-  const [panelOpen, setPanelOpen] = useState(false)
-  const [value, setValue] = useState('')
-
-  const control = stopInfo(stopList, item.id)
-  const stopped = control.stopped
-  const remaining = control.remaining
-  const available = isDishAvailable(stopList, item.id)
-  const parsed = parseRemaining(value)
-
-  const openPanel = () => {
-    setValue(remaining != null ? String(remaining) : '')
-    setPanelOpen(true)
-  }
-
-  const closePanel = () => setPanelOpen(false)
-
-  const onSave = () => {
-    if (parsed == null) return
-    void setRemaining(item.id, parsed)
-    closePanel()
-  }
-
-  const onRemoveLimit = () => {
-    void setRemaining(item.id, null)
-    closePanel()
-  }
-
-  return (
-    <div
-      className={cn(
-        'min-h-[56px] rounded-2xl border bg-[#0F1115] p-3',
-        stopped ? 'border-[#EF4444]/60' : 'border-[#262B35]',
-      )}
-    >
-      {/* Название + статусные бейджи */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[15px] font-extrabold leading-tight text-[#F5F1E8]">
-            {item.name}
-          </div>
-          <div className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-500">
-            <span>{item.time}</span>
-            <span aria-hidden>·</span>
-            <span>{PERIOD_LABEL[item.period] ?? item.period}</span>
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1" aria-label="Статус блюда">
-          {stopped && (
-            <span className="rounded-full bg-[#EF4444]/15 px-2.5 py-1 text-[11px] font-black text-red-400">
-              🚫 В СТОПЕ
-            </span>
-          )}
-          {remaining != null && (
-            <span className="rounded-full bg-[#F59E0B]/15 px-2.5 py-1 text-[11px] font-black text-amber-300">
-              {remaining === 0 ? '⚠️ Осталось: 0 — стоп' : `⚠️ Осталось: ${remaining} шт.`}
-            </span>
-          )}
-          {!stopped && remaining == null && (
-            <span
-              className={cn(
-                'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black',
-                available ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-500/10 text-zinc-400',
-              )}
-            >
-              <span
-                className={cn(
-                  'h-1.5 w-1.5 rounded-full',
-                  available ? 'bg-emerald-400' : 'bg-zinc-400',
-                )}
-                aria-hidden
-              />
-              {available ? 'доступен' : 'скрыт из зала'}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Управление */}
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          onClick={() => void setStopDish(item.id, !stopped)}
-          aria-label={
-            stopped ? `Снять со стопа — ${item.name}` : `Поставить в стоп — ${item.name}`
-          }
-          className={cn(
-            'flex h-[52px] flex-1 items-center justify-center gap-1.5 rounded-xl text-[13px] font-black transition-all active:scale-[0.98]',
-            stopped
-              ? 'bg-emerald-500 text-[#05140E] shadow-lg shadow-emerald-500/20'
-              : 'border-2 border-[#EF4444]/60 bg-[#EF4444]/10 text-red-400',
-          )}
-        >
-          {stopped ? '✅ Снять со стопа' : '🚫 В СТОП'}
-        </button>
-        <button
-          type="button"
-          onClick={() => (panelOpen ? closePanel() : openPanel())}
-          aria-expanded={panelOpen}
-          aria-controls={`remaining-panel-${item.id}`}
-          aria-label={`Задать остаток — ${item.name}`}
-          className={cn(
-            'flex h-[52px] flex-1 items-center justify-center gap-1.5 rounded-xl border-2 text-[13px] font-black transition-all active:scale-[0.98]',
-            panelOpen
-              ? 'border-[#F59E0B] bg-[#F59E0B]/20 text-amber-300'
-              : 'border-[#F59E0B]/50 bg-[#F59E0B]/10 text-amber-300',
-          )}
-        >
-          ⚠️ Задать остаток
-        </button>
-      </div>
-
-      {/* Инлайн-панель остатка */}
-      {panelOpen && (
-        <div
-          id={`remaining-panel-${item.id}`}
-          className="mt-2 rounded-xl border border-[#262B35] bg-[#161922] p-3"
-        >
-          <div className="flex items-center gap-2">
-            {QUICK_ADDS.map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() =>
-                  setValue(sanitizeRemainingInput(String((parseRemaining(value) ?? 0) + n)))
-                }
-                aria-label={`Прибавить ${n} к остатку`}
-                className="h-11 shrink-0 rounded-full border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-4 text-[14px] font-black text-amber-300 transition-all active:scale-95"
-              >
-                +{n}
-              </button>
-            ))}
-            <Input
-              value={value}
-              onChange={(e) => setValue(sanitizeRemainingInput(e.target.value))}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={3}
-              placeholder="0–999"
-              aria-label={`Остаток порций — ${item.name}`}
-              autoComplete="off"
-              className="ml-auto h-11 w-[104px] rounded-xl border-[#262B35] bg-[#0F1115] text-center text-lg font-black tabular-nums text-[#F5F1E8]"
-            />
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={parsed == null}
-              aria-label={`Сохранить остаток — ${item.name}`}
-              className="h-[52px] flex-[2] rounded-xl bg-[#F59E0B] text-[14px] font-black text-[#201400] shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98] disabled:opacity-40"
-            >
-              Сохранить{parsed != null ? ` · ${parsed} шт.` : ''}
-            </button>
-            {remaining != null && (
-              <button
-                type="button"
-                onClick={onRemoveLimit}
-                aria-label={`Снять лимит остатка — ${item.name}`}
-                className="h-[52px] flex-1 rounded-xl bg-[#232936] text-[13px] font-black text-zinc-300 transition-all active:scale-[0.98]"
-              >
-                Снять лимит
-              </button>
-            )}
-          </div>
-          <p className="mt-2 text-[11px] font-semibold leading-snug text-zinc-500">
-            При остатке 0 блюдо автоматически уходит в стоп.
-          </p>
-        </div>
-      )}
     </div>
   )
 }

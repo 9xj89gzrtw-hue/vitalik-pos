@@ -1,205 +1,173 @@
 /* ============================================================
-   ВИТАЛИК — общие типы (официант ⇄ кухня/раздача ⇄ монитор)
+   ВИТАЛИК v6 — общие типы (официант ⇄ кухня/раздача ⇄ аналитика)
+   Архитектура: серверный in-memory стор + HTTP-поллинг 1.5 с.
+   Никаких сокетов, никаких экранов «Ждёт связи».
    ============================================================ */
 
-/** Активный экран (нижняя навигация, доступна всем в 1 тап) */
+/** Экран нижней навигации (1 тап) */
 export type Screen = 'waiter' | 'kitchen' | 'analytics'
 
+/** Смена меню: завтрак 10:00–12:00 / обед 12:00–18:00 */
 export type Period = 'breakfast' | 'lunch'
 
-export type Station = 'breakfast' | 'cold' | 'hot_appetizer' | 'hot_main' | 'pastry'
+/** Ровно 3 повара (цеха) */
+export type CookId = 1 | 2 | 3
 
-export type CoursePriority = 1 | 2 | 3 | 4
+/** Режимы экрана кухни */
+export type KitchenMode = 'batch' | 'tickets' | 'stoplist'
 
-/** Статус блюда: в очереди → готовится → на раздаче */
-export type ItemStatus = 'queued' | 'cooking' | 'ready'
+/** Вкладки экрана официанта */
+export type WaiterTab = 'menu' | 'status'
 
-/**
- * 5-стадийный трекинг заказа «Анти-паника»:
- *   sent    🟡 ОТПРАВЛЕН — ждёт подтверждения кухни
- *   cooking 🔵→🟠 ПРИНЯТ ШЕФОМ / ГОТОВИТСЯ (acceptedAt фиксирует приём)
- *   ready   🟢 НА РАЗДАЧЕ — зовут раннера
- *   served  ⚪ ОТДАНО В ЗАЛ — в архив стола и аналитику
- */
-export type OrderStatus = 'sent' | 'cooking' | 'ready' | 'served'
-
-export type KitchenMode = 'tickets' | 'stoplist' | 'batch'
-
-export type WaiterTab = 'menu' | 'orders'
-
-export type StatusFilter = 'mine' | 'all'
-
-export type ConnectionState = 'connecting' | 'online' | 'offline'
+/** Официанты — ровно трое */
+export type WaiterName = 'Саша' | 'Денис' | 'Вова'
 
 /* ---------- статичное меню ---------- */
 
 export interface MenuItem {
   id: string
   name: string
+  /** Короткое имя для плотных списков (батчинг, баннеры, история) */
+  short: string
   description?: string
-  /** Время приготовления, напр. "8 мин" */
-  time: string
-  station: Station
-  coursePriority: CoursePriority
   category: string
   period: Period
+  /** Закреплённый повар (цех) */
+  cook: CookId
+  /** К блюду можно привязать гарнир (горячие закуски и горячие блюда) */
+  garnishAttachable: boolean
   isGarnish?: boolean
 }
 
-export interface TableInfo {
-  id: string
-  /** «Стол 7» / «Банкет 1» */
-  label: string
-  /** «7» / «Б1» — для компактных чипов */
-  short: string
-  banquet: boolean
+export interface CookInfo {
+  id: CookId
+  title: string
+  station: string
 }
 
-/* ---------- черновик чека официанта (до отправки) ---------- */
+/* ---------- заказы (сервер — источник истины) ---------- */
 
-export interface DraftItem {
-  /** Уникальный ключ строки: `menuItemId::garnishId::standalone` */
-  key: string
-  menuItemId: string
-  /** Привязанный гарнир (sd1…sd3) */
-  garnishId?: string
-  name: string
-  qty: number
-  comment?: string
-  /** Гарнир, заказанный как отдельное блюдо */
-  standalone?: boolean
-}
-
-export interface TableDraft {
-  items: DraftItem[]
-  /** ⭐ ВИП / ЗАКАЗЧИК — приоритет на кухне */
-  vip: boolean
-  /** Комментарий к столу («Отдать строго после тоста») */
-  tableNote: string
-}
-
-/* ---------- отправленный заказ ---------- */
-
+/**
+ * Позиция заказа с порционными счётчиками:
+ *   queued  = qty − announced   ⏳ ждёт озвучки повару
+ *   cooking = announced − ready 🔥 озвучено, готовится
+ *   ready   = ready − served    🟢 ГОТОВО НА РАЗДАЧЕ
+ *   served  = served            ⚪ подано (отдано раннеру)
+ * Инвариант: 0 ≤ served ≤ ready ≤ announced ≤ qty
+ */
 export interface OrderItem {
   id: string
-  orderId: string
   menuItemId: string
   name: string
   qty: number
   comment: string | null
-  station: Station
-  coursePriority: number
-  category: string
-  status: ItemStatus
-  tableId: string
-  garnishId: string | null
-  garnishName: string | null
-  standalone: boolean
-  isAddendum: boolean
+  /** menuItemId блюда, к которому привязан этот гарнир (для отображения) */
+  garnishFor: string | null
+  announced: number
+  ready: number
+  served: number
 }
 
 export interface Order {
   id: string
-  tableId: string
-  tableLabel: string
-  waiterName: string
-  isVIP: boolean
-  tableNote: string | null
-  status: OrderStatus
-  period: Period
-  sentAt: number
-  acceptedAt: number | null
-  readyAt: number | null
-  servedAt: number | null
-  addendumCount: number
+  /** 1…12 */
+  table: number
+  waiter: WaiterName
+  vip: boolean
+  /** Комментарий к заказу («Детям вперёд», «После тоста») */
+  comment: string | null
   items: OrderItem[]
+  createdAt: number
+  updatedAt: number
+  /** Шеф нажал «ПРИНЯТЬ» — зуммер замолкает */
+  acknowledged: boolean
+  /** Счётчик дозаказов для тикета */
+  addendumCount: number
 }
 
-export interface Analytics {
-  date: string
-  /** сколько порций каждого блюда ЗАКАЗАНО за сегодня (включая гарниры к блюдам) */
-  orderedDishes: number
-  /** отдано чеков за сегодня */
-  servedOrders: number
-  /** уникальных столов с отданными чеками */
-  servedTables: number
-  vipOrders: number
+/** Закрытый чек (журнал аналитики) */
+export interface ClosedCheck {
+  orderId: string
+  table: number
+  waiter: WaiterName
+  vip: boolean
+  comment: string | null
   items: { menuItemId: string; name: string; qty: number }[]
+  createdAt: number
+  closedAt: number
 }
 
 /* ---------- стоп-лист и остатки ---------- */
 
 export interface StopControl {
-  /** блюдо в стоп-листе — тапы официанта заблокированы */
+  /** Блюдо в стоп-листе — заказы заблокированы */
   stopped: boolean
-  /** лимит остатка (null = без лимита); при 0 блюдо автоматически в стопе */
+  /** Лимит порций на смену (null = без лимита) */
+  limit: number | null
+  /** Осталось порций; при 0 — автоматический стоп */
   remaining: number | null
 }
 
 export type StopList = Record<string, StopControl>
 
-/* ---------- протокол socket ---------- */
+/* ---------- полезные Payload-ы / ответ API ---------- */
 
 export interface SubmitItemPayload {
   menuItemId: string
   qty: number
   comment?: string
-  garnishId?: string
-  standalone?: boolean
+  garnishId?: string | null
 }
 
 export interface SubmitPayload {
-  clientOrderId: string
-  tableId: string
-  waiterName: string
-  isVIP: boolean
-  tableNote?: string
-  period: Period
+  action: 'create'
+  table: number
+  waiter: WaiterName
+  vip?: boolean
+  comment?: string | null
   items: SubmitItemPayload[]
+  reqId: string
 }
 
-export interface SubmitAck {
-  ok: boolean
-  orderId?: string
-  isAddendum?: boolean
-  duplicate?: boolean
-  error?: string
-}
+export type OrdersAction =
+  | SubmitPayload
+  | { action: 'acknowledge'; reqId: string }
+  | { action: 'announce'; menuItemId: string; count?: number; reqId: string }
+  | { action: 'ready'; menuItemId: string; count?: number; reqId: string }
+  | { action: 'served'; table: number; reqId: string }
 
-/** Заказ, ждущий восстановления связи (офлайн-очередь) */
-export interface OutboxEntry extends SubmitPayload {
-  queuedAt: number
-  tableLabel: string
-  pieces: number
-}
+export type StoplistAction =
+  | { action: 'setStopped'; menuItemId: string; stopped: boolean; reqId: string }
+  | { action: 'setLimit'; menuItemId: string; limit: number | null; reqId: string }
 
-export interface StatePayload {
+/** Полное состояние, которое отдаёт /api/sync и каждая мутация */
+export interface AppState {
+  revision: number
+  /** Открытые заказы (по одному на стол максимум) */
   orders: Order[]
-  analytics: Analytics
-  stopList: StopList
+  /** Закрытые чеки за смену (новые сверху) */
+  history: ClosedCheck[]
+  stoplist: StopList
+  /** Приготовлено порций за сегодня (по каждому блюду) */
+  counters: Record<string, number>
+  /** Заказано порций за сегодня (для расчёта остатков) */
+  ordered: Record<string, number>
+  serverTime: number
 }
 
-/** Изменение стоп-листа/остатка блюда (уведомление залу) */
-export interface StoplistNotification {
-  menuItemId: string
-  name: string
-  stopped: boolean
-  remaining: number | null
+export interface ApiOk {
+  ok: true
+  state: AppState
 }
 
-export interface OrderBrief {
-  orderId: string
-  tableId: string
-  tableLabel: string
-  waiterName: string
-  isVIP: boolean
-  pieces: number
-  addendumCount: number
-  sentAt: number
-  isAddendum?: boolean
+export interface ApiErr {
+  ok: false
+  error: string
 }
 
-export interface AckResult {
-  ok: boolean
-  error?: string
-}
+/* ---------- производные счётчики позиции ---------- */
+
+export const queuedOf = (it: OrderItem) => it.qty - it.announced
+export const cookingOf = (it: OrderItem) => it.announced - it.ready
+export const readyOf = (it: OrderItem) => it.ready - it.served
+export const servedOf = (it: OrderItem) => it.served

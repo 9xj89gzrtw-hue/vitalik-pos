@@ -1,97 +1,62 @@
 'use client'
 
-import { PackageCheck } from 'lucide-react'
-import { useAppStore } from '@/lib/store'
-import { formatElapsed, orderPieces, pluralDishes, sortKitchenOrders } from '@/lib/derive'
-import type { Order } from '@/lib/types'
+import { useState } from 'react'
+import { useVitalik } from '@/lib/api-client'
+import { haptic } from '@/lib/audio'
+import type { RunnerBannerData } from '@/lib/derive'
 import { cn } from '@/lib/utils'
-import { tableTitleOf } from './kitchen-utils'
 
 /* ============================================================
-   Блок «ВЫНОС ДЛЯ РАННЕРА» — все заказы со статусом ready.
-   Шеф голосует раннера без телефона: большой изумрудный
-   баннер + [ОТДАНО РАННЕРУ] (store.serveOrder).
+   📢 Баннер ВЫНОС для раннера (без телефона): контрастная плашка
+   «ВЫНОС: СТОЛ № X | Официант | Блюда». Шеф голосом командует:
+   «Раннер, забери Стол 4 для Дениса!». После выноса — одна кнопка.
    ============================================================ */
 
-export function RunnerBanner({ orders, now }: { orders: Order[]; now: number }) {
-  const serveOrder = useAppStore((s) => s.serveOrder)
-  const sorted = sortKitchenOrders(orders ?? [])
+export function RunnerBanner({ banner }: { banner: RunnerBannerData }) {
+  const { mutate } = useVitalik()
+  const [busy, setBusy] = useState(false)
+
+  const served = async () => {
+    if (busy) return
+    setBusy(true)
+    haptic([20, 40])
+    await mutate('/api/orders', { action: 'served', table: banner.table })
+    setBusy(false)
+  }
 
   return (
-    <section aria-label="Вынос для раннера" className="flex flex-col gap-3">
-      {sorted.map((order) => {
-        const waiting = Math.max(0, now - (order.readyAt ?? order.sentAt))
-        return (
-          <article
-            key={order.id}
-            className={cn(
-              'animate-pulse-bg overflow-hidden rounded-3xl border-2 p-4',
-              order.isVIP
-                ? 'vip-frame'
-                : 'border-emerald-500 bg-emerald-500/[0.08] shadow-[0_0_36px_-10px_rgba(16,185,129,0.55)]',
-            )}
-          >
-            <header className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-500/20 text-xl"
-                  aria-hidden
-                >
-                  📢
-                </span>
-                <div className="leading-none">
-                  <div className="text-[26px] font-black uppercase leading-none tracking-tight text-emerald-300">
-                    Вынос: {tableTitleOf(order)}
-                  </div>
-                  <div className="mt-1.5 text-[14px] font-extrabold text-[#F5F1E8]">
-                    Официант: {order.waiterName}
-                    {order.isVIP && <span className="text-[#D4AF37]"> · ⭐ ВИП</span>}
-                  </div>
-                </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="text-lg font-black tabular-nums leading-none text-emerald-300">
-                  ⏱ {formatElapsed(waiting)}
-                </div>
-                <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                  на раздаче
-                </div>
-              </div>
-            </header>
-
-            {/* Состав для раннера */}
-            <ul className="mt-3 flex flex-col gap-1 rounded-2xl bg-black/25 px-4 py-3">
-              {order.items.map((item) => (
-                <li
-                  key={item.id}
-                  className="text-[15px] font-extrabold leading-snug text-[#F5F1E8]"
-                >
-                  {item.qty}× {item.name}
-                  {item.garnishId && (
-                    <span className="font-bold text-zinc-400"> + {item.garnishName}</span>
-                  )}
-                  {item.comment && (
-                    <span className="font-bold text-amber-300"> «{item.comment}»</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-
-            <button
-              type="button"
-              onClick={() => void serveOrder(order.id)}
-              aria-label={`Отдано раннеру — ${order.tableLabel}`}
-              className="mt-3 flex h-[60px] w-full items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 text-[16px] font-black text-[#05140E] shadow-lg shadow-emerald-500/25 transition-all active:scale-[0.98]"
-            >
-              <PackageCheck className="h-6 w-6" strokeWidth={2.5} aria-hidden />
-              ОТДАНО РАННЕРУ
-              <span className="text-[12px] font-bold opacity-60">
-                ({pluralDishes(orderPieces(order))})
-              </span>
-            </button>
-          </article>
-        )
-      })}
-    </section>
+    <div
+      role="alert"
+      className={cn(
+        'overflow-hidden rounded-3xl border-2 shadow-xl',
+        banner.vip
+          ? 'border-[#D4AF37] bg-gradient-to-br from-[#10B981]/25 to-[#161922]'
+          : 'border-emerald-500/70 bg-gradient-to-br from-[#10B981]/20 to-[#161922]',
+      )}
+    >
+      <div className="ready-strip">🏃 Забрать с раздачи!</div>
+      <div className="p-4">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-[22px] font-black uppercase leading-none tracking-tight text-emerald-300">
+            📢 ВЫНОС: СТОЛ № {banner.table}
+          </span>
+          <span className="text-[14px] font-black uppercase text-[#F5F1E8]">
+            Официант: {banner.waiter.toUpperCase()}
+          </span>
+          {banner.vip && <span className="vip-chip">⭐ ВИП СТОЛ</span>}
+        </div>
+        <p className="mt-1.5 text-[16px] font-bold leading-snug text-[#F5F1E8]">
+          Блюда: {banner.dishes.join(', ')}
+        </p>
+        <button
+          type="button"
+          onClick={() => void served()}
+          disabled={busy}
+          className="mt-3 h-[56px] w-full rounded-2xl bg-emerald-500 text-[16px] font-black uppercase tracking-wide text-[#05140E] shadow-lg shadow-emerald-500/30 disabled:opacity-50 active:scale-[0.98]"
+        >
+          ✅ ОТДАНО РАННЕРУ
+        </button>
+      </div>
+    </div>
   )
 }
