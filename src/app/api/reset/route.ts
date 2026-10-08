@@ -1,29 +1,28 @@
 import { NextResponse } from 'next/server'
-import { ApiError, getStore, resetShift, snapshot } from '@/lib/server-store'
+import { db } from '@/lib/db'
 
-/* POST /api/reset — сброс тестовых данных и начало смены (PIN 0000) */
 export const dynamic = 'force-dynamic'
 
+const PIN = '0000'
+
+/** «Очистить смену»: заказы, счётчики и стоп-лист — в ноль */
 export async function POST(req: Request) {
-  const store = getStore()
+  let body: Record<string, unknown>
   try {
-    const body = (await req.json().catch(() => ({}))) as { pin?: string }
-    resetShift(store.state, String(body.pin ?? ''))
-    return NextResponse.json(
-      { ok: true, state: snapshot(store.state) },
-      { headers: { 'Cache-Control': 'no-store' } },
-    )
-  } catch (e) {
-    if (e instanceof ApiError) {
-      return NextResponse.json(
-        { ok: false, error: e.message },
-        { status: 400, headers: { 'Cache-Control': 'no-store' } },
-      )
-    }
-    console.error('[vitalik] /api/reset error', e)
-    return NextResponse.json(
-      { ok: false, error: 'Внутренняя ошибка сервера' },
-      { status: 500, headers: { 'Cache-Control': 'no-store' } },
-    )
+    body = (await req.json()) as Record<string, unknown>
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Некорректный запрос' }, { status: 400 })
   }
+
+  if (body.pin !== PIN) {
+    return NextResponse.json({ ok: false, error: 'Неверный PIN' }, { status: 403 })
+  }
+
+  await db.$transaction([
+    db.order.deleteMany({}),
+    db.dishCounter.deleteMany({}),
+    db.stopItem.deleteMany({}),
+  ])
+
+  return NextResponse.json({ ok: true })
 }

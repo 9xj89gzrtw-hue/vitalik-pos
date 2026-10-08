@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Manrope } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { PwaRegister } from "@/components/vitalik/pwa-register";
@@ -10,17 +10,10 @@ const inter = Inter({
   display: "swap",
 });
 
-const manrope = Manrope({
-  variable: "--font-manrope",
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700", "800"],
-  display: "swap",
-});
-
 export const metadata: Metadata = {
-  title: "ВИТАЛИК — POS ресторана",
+  title: "ВИТАЛИК — POS",
   description:
-    "Ресторанная POS-система: официанты, кухня с 3 поварами и батчингом, стоп-лист, аналитика. Единый серверный.state и HTTP-поллинг — стабильная синхронизация на любом смартфоне.",
+    "Простое и надёжное POS: официант отправляет заказ в один тап, кухня видит сводку и карточки, данные живут в базе — синхронизация стабильна на любом смартфоне.",
   applicationName: "ВИТАЛИК",
   manifest: "/manifest.json",
   icons: {
@@ -43,7 +36,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#0D0F12",
+  themeColor: "#12141A",
 };
 
 export default function RootLayout({
@@ -54,10 +47,10 @@ export default function RootLayout({
   return (
     <html lang="ru" className="dark" suppressHydrationWarning>
       <body
-        className={`${inter.variable} ${manrope.variable} font-sans antialiased bg-background text-foreground overscroll-none`}
+        className={`${inter.variable} font-sans antialiased bg-background text-foreground overscroll-none`}
       >
         {children}
-        <Toaster position="top-center" closeButton richColors theme="dark" />
+        <Toaster position="top-center" theme="dark" offset="56px" />
         <PwaRegister />
       </body>
     </html>

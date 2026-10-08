@@ -1,7 +1,7 @@
 /* ВИТАЛИК — service worker (PWA).
    Стратегия: оболочка — network-first (актуальность в dev),
    статические ассеты манифеста/иконок — cache-first. */
-const CACHE = 'vitalik-v1'
+const CACHE = 'vitalik-v2'
 const PRECACHE = ['/manifest.json', '/icon-512.png', '/icon-maskable-512.png']
 
 self.addEventListener('install', (event) => {

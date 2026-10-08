@@ -1,14 +1,14 @@
 {
-  "name": "ВИТАЛИК — связь зала и кухни",
+  "name": "ВИТАЛИК — POS зала и кухни",
   "short_name": "ВИТАЛИК",
-  "description": "Сверхнадёжный трекинг заказов: официант, кухня/раздача и монитор зала видят статус каждого блюда в реальном времени.",
+  "description": "Простое и надёжное POS: заказ за 3 клика, кухня со сводкой и карточками, стабильная синхронизация.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0F1115",
-  "theme_color": "#0F1115",
+  "background_color": "#12141A",
+  "theme_color": "#12141A",
   "lang": "ru",
   "categories": ["food", "business", "productivity"],
   "icons": [

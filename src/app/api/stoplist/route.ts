@@ -1,33 +1,30 @@
 import { NextResponse } from 'next/server'
-import { ApiError, applyStoplistAction, getStore, snapshot } from '@/lib/server-store'
+import { db } from '@/lib/db'
+import { DISH_BY_NAME } from '@/lib/menu'
 
-/* POST /api/stoplist — мутации стоп-листа:
-   setStopped · setLimit */
 export const dynamic = 'force-dynamic'
 
+/** Включить/выключить блюдо (стоп-лист) — 1 клик шефа */
 export async function POST(req: Request) {
-  const store = getStore()
+  let body: Record<string, unknown>
   try {
-    const body = (await req.json()) as Record<string, unknown>
-    if (!body || typeof body.action !== 'string') {
-      throw new ApiError('Некорректный запрос')
-    }
-    const result = applyStoplistAction(store, body)
-    return NextResponse.json(
-      { ok: true, ...result, state: snapshot(store.state) },
-      { headers: { 'Cache-Control': 'no-store' } },
-    )
-  } catch (e) {
-    if (e instanceof ApiError) {
-      return NextResponse.json(
-        { ok: false, error: e.message, state: snapshot(store.state) },
-        { status: 400, headers: { 'Cache-Control': 'no-store' } },
-      )
-    }
-    console.error('[vitalik] /api/stoplist error', e)
-    return NextResponse.json(
-      { ok: false, error: 'Внутренняя ошибка сервера' },
-      { status: 500, headers: { 'Cache-Control': 'no-store' } },
-    )
+    body = (await req.json()) as Record<string, unknown>
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Некорректный запрос' }, { status: 400 })
   }
+
+  const dish = typeof body.dish === 'string' ? body.dish : ''
+  const stopped = body.stopped === true
+
+  if (!DISH_BY_NAME.has(dish)) {
+    return NextResponse.json({ ok: false, error: 'Неизвестное блюдо' }, { status: 400 })
+  }
+
+  await db.stopItem.upsert({
+    where: { dish },
+    create: { dish, stopped },
+    update: { stopped },
+  })
+
+  return NextResponse.json({ ok: true, dish, stopped })
 }

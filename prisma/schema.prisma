@@ -1,0 +1,42 @@
+// ВИТАЛИК — упрощённое POS. Хранение: БД (не память лямбды!).
+// Для Vercel: создайте бесплатную БД (Supabase/Neon Postgres),
+// смените provider на "postgresql" и задайте DATABASE_URL, затем `prisma db push`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Заказ стола. Статусы: pending (готовится) | ready (готово к выносу) | archived (забрали)
+model Order {
+  id          String    @id @default(cuid())
+  tableNumber Int
+  waiter      String
+  isVip       Boolean   @default(false)
+  status      String    @default("pending")
+  /// JSON: [{ dish: string; qty: number; garnish?: string }]
+  itemsJson   String
+  comment     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  readyAt     DateTime?
+  archivedAt  DateTime?
+
+  @@index([status, createdAt])
+}
+
+/// Счётчик порций блюда за смену (сводка за день)
+model DishCounter {
+  dish String @id
+  qty  Int    @default(0)
+}
+
+/// Стоп-лист: блюдо выключено (закончилось)
+model StopItem {
+  dish    String  @id
+  stopped Boolean @default(true)
+}
